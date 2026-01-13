@@ -1,0 +1,54 @@
+**/bin/**
+**/target/**
+**/build/
+out/**
+**out/**
+**classes/**
+.idea/**
+.fastRequest/**
+*.classpath
+*.project
+*.iml
+*.db
+*.gz
+*.DS_Store
+**/rebel.xml
+*.log
+**/*.log
+*.class
+*.jar
+*.war
+*.ear
+*.xls
+**/stus/**
+**/node_modules/**
+package-lock.json
+package.json
+
+# Maven
+target/
+dependency-reduced-pom.xml
+*.jar
+*.war
+*.ear
+*.class
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.classpath
+.project
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+.agent
