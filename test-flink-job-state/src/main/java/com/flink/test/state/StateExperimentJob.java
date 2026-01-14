@@ -10,6 +10,9 @@ import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.connector.base.DeliveryGuarantee;
+import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
+import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.CheckpointingMode;
@@ -21,6 +24,7 @@ import org.apache.flink.util.Collector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -81,6 +85,26 @@ public class StateExperimentJob {
 
         // 4. Sink (Print to stdout for easy experimentation)
         resultStream.print();
+
+        // 5. Kafka Sink
+        // Note: EXACTLY_ONCE needs checkpointing enabled (already enabled above) and a transactionalIdPrefix.
+        Properties kafkaProps = new Properties();
+        kafkaProps.setProperty("transaction.timeout.ms", "600000"); // 10 min
+
+        KafkaSink<String> kafkaSink = KafkaSink.<String>builder()
+                .setBootstrapServers(FlinkConstants.DEFAULT_KAFKA_SERVER)
+                .setKafkaProducerConfig(kafkaProps)
+                .setRecordSerializer(
+                        KafkaRecordSerializationSchema.builder()
+                                .setTopic(FlinkConstants.VALUE_AGG_OUTPUT_TOPIC)
+                                .setValueSerializationSchema(new SimpleStringSchema())
+                                .build()
+                )
+                .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
+                .setTransactionalIdPrefix("state-experiment-job")
+                .build();
+
+        resultStream.sinkTo(kafkaSink);
 
         LOG.info("Starting State Experiment Job...");
         env.execute("Flink State Experiment Job");
