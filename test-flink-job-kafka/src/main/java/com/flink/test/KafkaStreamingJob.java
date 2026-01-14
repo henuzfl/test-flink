@@ -21,6 +21,9 @@ public class KafkaStreamingJob {
 
     public static void main(String[] args) throws Exception {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        
+        // Enable checkpointing to use cluster-level configuration
+        env.enableCheckpointing(10000);
 
         KafkaSource<String> source = KafkaSource.<String>builder()
                 .setBootstrapServers(FlinkConstants.DEFAULT_KAFKA_SERVER)
@@ -33,7 +36,7 @@ public class KafkaStreamingJob {
         DataStream<String> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "Kafka Source");
 
         DataStream<String> transformedStream = stream.map(value -> {
-            LOG.debug("Received message: {}", value);
+            LOG.info("Received message: {}", value);
             return "Processed: " + value;
         });
 
@@ -45,6 +48,7 @@ public class KafkaStreamingJob {
                         .build())
                 .build();
 
+        transformedStream.print();
         transformedStream.sinkTo(sink);
 
         LOG.info("Starting Flink Job in test-flink-job-kafka module...");
