@@ -7,17 +7,21 @@ import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.time.Time;
 import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
+import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
-import org.apache.flink.core.fs.FileSystem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * Flink State and Checkpoint Experiment Job.
@@ -33,8 +37,19 @@ public class StateExperimentJob {
 
         // 1. Checkpoint Configuration 
         // 只要集群配置了 state.checkpoints.dir，这里只需开启即可。
-        // env.enableCheckpointing(10000); 
-        // env.setRestartStrategy(RestartStrategies.fixedDelayRestart(3, 10000));
+        env.enableCheckpointing(10000); // Checkpoint every 10 seconds
+        env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
+        env.getCheckpointConfig().setMinPauseBetweenCheckpoints(5000); // Minimum pause between checkpoints: 5 seconds
+        env.getCheckpointConfig().setCheckpointTimeout(60000); // Checkpoint timeout: 60 seconds
+        env.getCheckpointConfig().setMaxConcurrentCheckpoints(1); // Only one checkpoint at a time
+        env.getCheckpointConfig().setExternalizedCheckpointCleanup(
+                CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION); // Retain checkpoint on cancellation
+        
+        // Restart strategy
+        env.setRestartStrategy(RestartStrategies.fixedDelayRestart(
+                3, // Number of restart attempts
+                Time.of(10, TimeUnit.SECONDS) // Delay between restarts
+        ));
 
         // 2. Kafka Source
         KafkaSource<String> source = KafkaSource.<String>builder()
