@@ -23,7 +23,7 @@ public class KafkaStreamingJob {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         
         // Enable checkpointing to use cluster-level configuration
-        env.enableCheckpointing(10000);
+//        env.enableCheckpointing(10000);
 
         KafkaSource<String> source = KafkaSource.<String>builder()
                 .setBootstrapServers(FlinkConstants.DEFAULT_KAFKA_SERVER)

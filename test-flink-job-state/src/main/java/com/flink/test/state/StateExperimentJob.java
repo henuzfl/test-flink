@@ -33,8 +33,8 @@ public class StateExperimentJob {
 
         // 1. Checkpoint Configuration 
         // 只要集群配置了 state.checkpoints.dir，这里只需开启即可。
-        env.enableCheckpointing(10000); 
-        env.setRestartStrategy(RestartStrategies.fixedDelayRestart(3, 10000));
+        // env.enableCheckpointing(10000); 
+        // env.setRestartStrategy(RestartStrategies.fixedDelayRestart(3, 10000));
 
         // 2. Kafka Source
         KafkaSource<String> source = KafkaSource.<String>builder()
