@@ -79,7 +79,6 @@ public class IotDeriveJob {
         Properties jdbcProps = new Properties();
         jdbcProps.setProperty("useSSL", "false");
         jdbcProps.setProperty("allowPublicKeyRetrieval", "true");
-        jdbcProps.setProperty("serverTimezone", "Asia/Shanghai");
         jdbcProps.setProperty("useUnicode", "true");
         jdbcProps.setProperty("characterEncoding", "UTF-8");
 
@@ -90,6 +89,7 @@ public class IotDeriveJob {
                 .tableList("demo_flink.iot_point_def") 
                 .username("root")
                 .password("ih9PExr0RNojo20r%")
+                .serverTimeZone("Asia/Shanghai")
                 .jdbcProperties(jdbcProps)
                 .deserializer(new JsonDebeziumDeserializationSchema()) 
                 .startupOptions(StartupOptions.initial()) 
