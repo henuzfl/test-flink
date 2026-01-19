@@ -8,6 +8,7 @@ import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 
+
 public class TotalDiffCalcFunc implements CalcFuncStrategy {
     private static final long serialVersionUID = 1L;
 
@@ -19,6 +20,7 @@ public class TotalDiffCalcFunc implements CalcFuncStrategy {
         pointValueState = ctx.getMapState(new MapStateDescriptor<>(
                 "point-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO));
 
+        // 总差累计的初始值设置为永远不过期
         historyValueState = ctx.getMapState(new MapStateDescriptor<>(
                 "history-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO));
     }

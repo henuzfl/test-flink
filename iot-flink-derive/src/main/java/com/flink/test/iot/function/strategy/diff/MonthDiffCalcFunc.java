@@ -6,6 +6,8 @@ import com.flink.test.iot.model.DevicePointRule;
 import org.apache.flink.api.common.functions.RuntimeContext;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.StateTtlConfig;
+import org.apache.flink.api.common.time.Time;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 
 import java.time.Instant;
@@ -24,8 +26,18 @@ public class MonthDiffCalcFunc implements CalcFuncStrategy {
         pointValueState = ctx.getMapState(new MapStateDescriptor<>(
                 "point-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO));
 
-        historyValueState = ctx.getMapState(new MapStateDescriptor<>(
-                "history-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO));
+        // 设置 TTL 为 35 天
+        StateTtlConfig ttlConfig = StateTtlConfig
+                .newBuilder(Time.days(35))
+                .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
+                .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
+                .build();
+
+        MapStateDescriptor<String, Double> historyDesc = new MapStateDescriptor<>(
+                "history-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO);
+        historyDesc.enableTimeToLive(ttlConfig);
+        
+        historyValueState = ctx.getMapState(historyDesc);
     }
 
     @Override
