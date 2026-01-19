@@ -22,7 +22,6 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.Duration;
 import java.util.Objects;
 import java.util.Properties;
 
@@ -110,19 +109,14 @@ public class IotDeriveJob {
         // ========================
         DataStream<PointData> resultStream = pointStream
                 // 使用 Tuple2 作为 Key 避免字符串拼接
-                .keyBy(new KeySelector<PointData, Tuple2<Integer, String>>() {
-                    @Override
-                    public Tuple2<Integer, String> getKey(PointData value) {
-                        return new Tuple2<>(value.getCompany_id(), value.getDevice_code());
-                    }
-                })
+                .keyBy((KeySelector<PointData, Tuple2<Integer, String>>) value -> new Tuple2<>(value.getCompany_id(), value.getDevice_code()))
                 .connect(broadcastRules)
                 .process(new DeriveProcessFunction());
 
         // ========================
         // 5️⃣ Kafka Sink
         // ========================
-        DataStream<String> resultJsonStream = resultStream.map(new RichMapFunction<PointData, String>() {
+        DataStream<String> resultJsonStream = resultStream.map(new RichMapFunction<>() {
             private transient ObjectMapper jsonMapper;
 
             @Override
@@ -144,7 +138,7 @@ public class IotDeriveJob {
         KafkaSink<String> kafkaSink = KafkaSink.<String>builder()
                 .setBootstrapServers("10.19.93.228:9092")
                 .setKafkaProducerConfig(kafkaProps)
-                .setDeliverGuarantee(DeliveryGuarantee.AT_LEAST_ONCE) // 至少一次
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE) // 至少一次
                 .setRecordSerializer(KafkaRecordSerializationSchema.builder()
                         .setTopic(OUTPUT_TOPIC)
                         .setValueSerializationSchema(new org.apache.flink.api.common.serialization.SimpleStringSchema())
