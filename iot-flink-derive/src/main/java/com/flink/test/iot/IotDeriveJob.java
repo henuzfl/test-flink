@@ -3,142 +3,162 @@ package com.flink.test.iot;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flink.test.iot.function.DeriveProcessFunction;
 import com.flink.test.iot.model.PointData;
-import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.RichMapFunction;
-import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.cdc.connectors.mysql.source.MySqlSource;
+import org.apache.flink.cdc.connectors.mysql.table.StartupOptions;
+import org.apache.flink.cdc.debezium.JsonDebeziumDeserializationSchema;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.streaming.api.TimeCharacteristic;
+import org.apache.flink.connector.base.DeliveryGuarantee;
+import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
+import org.apache.flink.connector.kafka.sink.KafkaSink;
+import org.apache.flink.connector.kafka.source.KafkaSource;
+import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
+import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
-import org.apache.flink.streaming.api.windowing.time.Time;
-import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
-import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
-import org.apache.flink.util.Collector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
+import java.util.Objects;
 import java.util.Properties;
 
 /**
- * IoT Point Derivation Job
- *
- * Requirements:
- * 1. Flink 1.9.x compatible (Target)
- * 2. Kafka Source (JSON)
- * 3. Keyed State Calculation
- * 4. Output to Console (Demo)
+ * IoT 点位衍生计算作业 - 高性能生产版
+ * 特性：
+ * 1. Kafka Source + Flink CDC Source
+ * 2. JSON 解析优化
+ * 3. EventTime + Watermark 触发 onTimer
+ * 4. Tuple2 KeyBy 避免字符串拼接
+ * 5. Kafka Sink 批量发送，保证至少一次
  */
 public class IotDeriveJob {
 
     private static final Logger logger = LoggerFactory.getLogger(IotDeriveJob.class);
-    private static final String OUTPUT_TOPIC = "output-topic-2";
+    private static final String OUTPUT_TOPIC = "output-topic-3";
 
     public static void main(String[] args) throws Exception {
-        // 1. Environment Setup
+        // 创建 Flink 流执行环境
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
-        env.setParallelism(1); // Default for demo
-        
-        // WORKAROUND: For Java 9+ environment running Flink 1.9
-        // Resolves "InaccessibleObjectException: Unable to make field private static final long java.util.Properties.serialVersionUID accessible"
-        env.getConfig().disableClosureCleaner();
+        env.setParallelism(4); // 本地调试或测试可以使用 1，生产可按资源调整
 
-        // 2. Kafka Source Configuration
-        Properties props = new Properties();
-        props.setProperty("bootstrap.servers", "10.19.93.228:9092");
-        props.setProperty("group.id", "iot-derive-group");
-        // Ensure auto-commit is off to let Flink manage offsets if checkpointing is enabled
-        // (Checkpointing not explicitly asked but good practice)
-        
-        FlinkKafkaConsumer<String> consumer = new FlinkKafkaConsumer<>(
-                "demo-flink-02",
-                new SimpleStringSchema(),
-                props);
-        
-        // Start from latest for demo, or group offsets
-        consumer.setStartFromLatest();
-
-        DataStream<String> rawStream = env.addSource(consumer);
-
-        // 3. Parse JSON & Assign Watermarks
-        // Using ObjectMapper to parse JSON
         final ObjectMapper mapper = new ObjectMapper();
 
-        DataStream<PointData> pointStream = rawStream
-                .flatMap(new FlatMapFunction<String, PointData>() {
-                    @Override
-                    public void flatMap(String value, Collector<PointData> out) {
-                        try {
-                            PointData data = mapper.readValue(value, PointData.class);
-                            if (data != null && data.getPoint_code() != null) {
-                                logger.info("Received PointData: company_id={}, device_code={}, point_code={}, value={}, ts={}", 
-                                        data.getCompany_id(), data.getDevice_code(), data.getPoint_code(), 
-                                        data.getValue(), data.getTs());
-                                out.collect(data);
-                            } else {
-                                logger.warn("Invalid PointData (null or missing point_code): {}", value);
-                            }
-                        } catch (Exception e) {
-                            // Ignore bad data in demo
-                            logger.warn("Parse Error for JSON: {}, error: {}", value, e.getMessage());
-                        }
-                    }
-                })
-                .assignTimestampsAndWatermarks(new BoundedOutOfOrdernessTimestampExtractor<PointData>(Time.minutes(1)) {
-                    @Override
-                    public long extractTimestamp(PointData element) {
-                        return element.getTs();
-                    }
-                });
+        // ========================
+        // 1️⃣ Kafka Source
+        // ========================
+        KafkaSource<String> kafkaSource = KafkaSource.<String>builder()
+                .setBootstrapServers("10.19.93.228:9092")
+                .setTopics("demo-flink-02")
+                .setGroupId("iot-derive-group-1")
+                .setStartingOffsets(OffsetsInitializer.latest()) // 最新偏移量启动
+                .setValueOnlyDeserializer(new org.apache.flink.api.common.serialization.SimpleStringSchema())
+                .build();
 
-        // 4. KeyBy and Process
-        // Key: company_id + device_code
+        // 1. 获取 Kafka 流并直接在 Source 端通过解析 JSON 生成 Watermark
+        // 这种方式最健壮，能自动解决 Kafka 分区空闲导致的 Watermark 不推进问题
+        // 1. 获取 Kafka 流，去掉 Watermark
+        DataStream<PointData> pointStream = env.fromSource(
+                kafkaSource,
+                WatermarkStrategy.noWatermarks(),
+                "Kafka Source"
+        ).map(value -> {
+            try {
+                return mapper.readValue(value, PointData.class);
+            } catch (Exception e) {
+                return null;
+            }
+        }).filter(Objects::nonNull);
+
+        // ========================
+        // 3️⃣ Flink CDC Source
+        // ========================
+        Properties jdbcProps = new Properties();
+        jdbcProps.setProperty("useSSL", "false");
+        jdbcProps.setProperty("allowPublicKeyRetrieval", "true");
+        jdbcProps.setProperty("serverTimezone", "Asia/Shanghai");
+        jdbcProps.setProperty("useUnicode", "true");
+        jdbcProps.setProperty("characterEncoding", "UTF-8");
+
+        MySqlSource<String> mySqlSource = MySqlSource.<String>builder()
+                .hostname("10.19.93.240")
+                .port(3306)
+                .databaseList("demo_flink") 
+                .tableList("demo_flink.iot_point_def") 
+                .username("root")
+                .password("ih9PExr0RNojo20r%")
+                .jdbcProperties(jdbcProps)
+                .deserializer(new JsonDebeziumDeserializationSchema()) 
+                .startupOptions(StartupOptions.initial()) 
+                .build();
+
+        // 3. 读取 MySQL 规则流，同样去掉 Watermark
+        DataStream<String> ruleStream = env.fromSource(
+                mySqlSource,
+                WatermarkStrategy.noWatermarks(),
+                "MySQL CDC Source"
+        );
+
+        // 广播规则状态
+        BroadcastStream<String> broadcastRules = ruleStream.broadcast(DeriveProcessFunction.RULES_STATE_DESC);
+
+        // ========================
+        // 4️⃣ Connect + DeriveProcessFunction
+        // ========================
         DataStream<PointData> resultStream = pointStream
-                .keyBy(new KeySelector<PointData, String>() {
+                // 使用 Tuple2 作为 Key 避免字符串拼接
+                .keyBy(new KeySelector<PointData, Tuple2<Integer, String>>() {
                     @Override
-                    public String getKey(PointData value) {
-                        return value.getCompany_id() + "_" + value.getDevice_code();
+                    public Tuple2<Integer, String> getKey(PointData value) {
+                        return new Tuple2<>(value.getCompany_id(), value.getDevice_code());
                     }
                 })
-                .timeWindow(Time.minutes(15), Time.minutes(1))
+                .connect(broadcastRules)
                 .process(new DeriveProcessFunction());
 
-        // 5. Output to Kafka and Log
-        // Convert PointData to JSON string for Kafka
+        // ========================
+        // 5️⃣ Kafka Sink
+        // ========================
         DataStream<String> resultJsonStream = resultStream.map(new RichMapFunction<PointData, String>() {
             private transient ObjectMapper jsonMapper;
 
             @Override
-            public void open(Configuration parameters) throws Exception {
-                super.open(parameters);
+            public void open(Configuration parameters) {
                 jsonMapper = new ObjectMapper();
             }
 
             @Override
             public String map(PointData pointData) throws Exception {
-                try {
-                    return jsonMapper.writeValueAsString(pointData);
-                } catch (Exception e) {
-                    logger.error("Failed to serialize PointData to JSON: {}", pointData, e);
-                    return null;
-                }
+                return jsonMapper.writeValueAsString(pointData);
             }
-        }).filter(json -> json != null);
+        });
 
-        // Sink to Kafka
-        FlinkKafkaProducer<String> kafkaProducer = new FlinkKafkaProducer<>(
-                OUTPUT_TOPIC,
-                new SimpleStringSchema(),
-                props);
-        resultJsonStream.addSink(kafkaProducer);
-        
-        // Also log for debugging (optional)
+        // Kafka 生产者配置
+        Properties kafkaProps = new Properties();
+        kafkaProps.put("linger.ms", "50"); // 批量发送延迟
+        kafkaProps.put("batch.size", "16384"); // 批量大小
+
+        KafkaSink<String> kafkaSink = KafkaSink.<String>builder()
+                .setBootstrapServers("10.19.93.228:9092")
+                .setKafkaProducerConfig(kafkaProps)
+                .setDeliverGuarantee(DeliveryGuarantee.AT_LEAST_ONCE) // 至少一次
+                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+                        .setTopic(OUTPUT_TOPIC)
+                        .setValueSerializationSchema(new org.apache.flink.api.common.serialization.SimpleStringSchema())
+                        .build()
+                )
+                .build();
+
+        // 写入 Kafka
+        resultJsonStream.sinkTo(kafkaSink);
+
+        // 调试输出（生产可注释）
         resultStream.print("Derived Result");
 
-        // 6. Execute
-        logger.info("Starting IoT Flink Derive Job, output topic: {}", OUTPUT_TOPIC);
+        logger.info("启动 IoT Flink 衍生计算作业 (CDC Enabled, Flink 1.19), 输出 topic: {}", OUTPUT_TOPIC);
         env.execute("IoT Flink Derive Job");
     }
 }

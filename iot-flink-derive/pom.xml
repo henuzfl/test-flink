@@ -9,6 +9,11 @@
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+    </properties>
+
     <artifactId>iot-flink-derive</artifactId>
 
     <dependencies>
@@ -16,17 +21,53 @@
             <groupId>com.flink.test</groupId>
             <artifactId>test-flink-common</artifactId>
         </dependency>
+
+        <!-- Flink Dependencies (Managed by Parent) -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-java</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-streaming-java</artifactId>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-clients</artifactId>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-connector-kafka</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-base</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+
+        <!-- Flink Table API (Required by CDC) -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-common</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-api-java</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        
+        <!-- Flink CDC (Apache 3.1.0 for Flink 1.19) -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-mysql-cdc</artifactId>
+            <version>3.1.0</version>
         </dependency>
 
         <!-- Database Dependencies -->
@@ -50,9 +91,11 @@
             <version>0.4.8</version>
         </dependency>
 
+        <!-- Logging Implementation (To see logger.info in console) -->
         <dependency>
-            <groupId>com.flink.test</groupId>
-            <artifactId>test-flink-common</artifactId>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>1.7.32</version>
         </dependency>
     </dependencies>
 
