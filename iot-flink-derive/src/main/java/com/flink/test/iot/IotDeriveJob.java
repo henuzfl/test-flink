@@ -37,7 +37,7 @@ import java.util.Properties;
 public class IotDeriveJob {
 
     private static final Logger logger = LoggerFactory.getLogger(IotDeriveJob.class);
-    private static final String OUTPUT_TOPIC = "output-topic-3";
+    private static final String OUTPUT_TOPIC = "output-topic-2";
 
     public static void main(String[] args) throws Exception {
         // 创建 Flink 流执行环境
@@ -109,7 +109,12 @@ public class IotDeriveJob {
         // ========================
         DataStream<PointData> resultStream = pointStream
                 // 使用 Tuple2 作为 Key 避免字符串拼接
-                .keyBy((KeySelector<PointData, Tuple2<Integer, String>>) value -> new Tuple2<>(value.getCompany_id(), value.getDevice_code()))
+                .keyBy(new KeySelector<PointData, Tuple2<Integer, String>>() {
+                    @Override
+                    public Tuple2<Integer, String> getKey(PointData value) {
+                        return new Tuple2<>(value.getCompany_id(), value.getDevice_code());
+                    }
+                })
                 .connect(broadcastRules)
                 .process(new DeriveProcessFunction());
 

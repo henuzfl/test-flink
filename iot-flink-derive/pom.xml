@@ -91,6 +91,14 @@
             <version>0.4.8</version>
         </dependency>
 
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.32</version>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- Logging Implementation (To see logger.info in console) -->
         <dependency>
             <groupId>org.slf4j</groupId>
