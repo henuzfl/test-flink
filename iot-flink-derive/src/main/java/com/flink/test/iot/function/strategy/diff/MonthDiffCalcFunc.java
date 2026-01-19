@@ -1,6 +1,8 @@
-package com.flink.test.iot.strategy;
+package com.flink.test.iot.function.strategy.diff;
 
-import com.flink.test.iot.model.DeriveRule;
+import com.flink.test.iot.function.strategy.CalcFuncStrategy;
+import com.flink.test.iot.function.strategy.CalculationContext;
+import com.flink.test.iot.model.DevicePointRule;
 import org.apache.flink.api.common.functions.RuntimeContext;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
@@ -11,7 +13,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
-public class DayDiffStrategy implements DeriveStrategy {
+public class MonthDiffCalcFunc implements CalcFuncStrategy {
     private static final long serialVersionUID = 1L;
 
     private transient MapState<String, Double> pointValueState;
@@ -27,15 +29,15 @@ public class DayDiffStrategy implements DeriveStrategy {
     }
 
     @Override
-    public void calculate(DeriveRule rule, CalculationContext ctx) throws Exception {
+    public void calculate(DevicePointRule rule, CalculationContext ctx) throws Exception {
         Double cur = pointValueState.get(rule.getSourcePointCode());
         if (cur == null) return;
 
         Instant instant = Instant.ofEpochMilli(ctx.getTimestamp());
         LocalDateTime dt = LocalDateTime.ofInstant(instant, ZoneId.systemDefault());
-        String dayStr = dt.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String monthStr = dt.format(DateTimeFormatter.ofPattern("yyyyMM"));
         
-        String startKey = rule.getSourcePointCode() + "_day_" + dayStr + "_start";
+        String startKey = rule.getSourcePointCode() + "_month_" + monthStr + "_start";
         Double start = historyValueState.get(startKey);
         
         if (start == null) {

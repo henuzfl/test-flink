@@ -1,12 +1,14 @@
-package com.flink.test.iot.strategy;
+package com.flink.test.iot.function.strategy.diff;
 
-import com.flink.test.iot.model.DeriveRule;
+import com.flink.test.iot.function.strategy.CalcFuncStrategy;
+import com.flink.test.iot.function.strategy.CalculationContext;
+import com.flink.test.iot.model.DevicePointRule;
 import org.apache.flink.api.common.functions.RuntimeContext;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 
-public class TotalDiffStrategy implements DeriveStrategy {
+public class TotalDiffCalcFunc implements CalcFuncStrategy {
     private static final long serialVersionUID = 1L;
 
     private transient MapState<String, Double> pointValueState;
@@ -22,7 +24,7 @@ public class TotalDiffStrategy implements DeriveStrategy {
     }
 
     @Override
-    public void calculate(DeriveRule rule, CalculationContext ctx) throws Exception {
+    public void calculate(DevicePointRule rule, CalculationContext ctx) throws Exception {
         Double cur = pointValueState.get(rule.getSourcePointCode());
         if (cur == null) return;
 

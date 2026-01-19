@@ -1,15 +1,15 @@
 package com.flink.test.iot.function;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.flink.test.iot.model.DeriveRule;
+import com.flink.test.iot.function.strategy.CalculationContext;
+import com.flink.test.iot.model.DevicePointRule;
 import com.flink.test.iot.model.PointData;
-import com.flink.test.iot.strategy.CalculationContext;
-import com.flink.test.iot.strategy.DeriveStrategy;
-import com.flink.test.iot.strategy.DeriveStrategyFactory;
+import com.flink.test.iot.function.strategy.CalcFuncStrategy;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.flink.api.common.state.*;
+import org.apache.flink.api.common.state.BroadcastState;
+import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeHint;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -20,26 +20,21 @@ import org.apache.flink.util.Collector;
 
 import java.util.*;
 
-/**
- * 稳定触发 Timer 的 DeriveProcessFunction
- * 使用策略模式处理不同的推算公式
- * 数据源对应 demo_flink.iot_point_def 表
- */
 @Slf4j
-public class DeriveProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<Integer, String>, PointData, String, PointData> {
+public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<Integer, String>, PointData, String, PointData> {
 
-    public static final MapStateDescriptor<String, Map<String, DeriveRule>> RULES_STATE_DESC =
+    public static final MapStateDescriptor<Tuple2<Integer, String>, Map<String, DevicePointRule>> RULES_STATE_DESC =
             new MapStateDescriptor<>(
                     "rules-broadcast-state",
-                    BasicTypeInfo.STRING_TYPE_INFO,
-                    TypeInformation.of(new TypeHint<>() {
+                    TypeInformation.of(new TypeHint<Tuple2<Integer, String>>() {
+                    }),
+                    TypeInformation.of(new TypeHint<Map<String, DevicePointRule>>() {
                     }));
 
     private transient MapState<Long, List<PointData>> windowBuckets; // 按分钟桶
     private transient MapState<String, Double> pointValueState; // 最新值
     private transient MapState<Long, Boolean> registeredTimers; // 避免重复注册 Timer
-    private transient ObjectMapper objectMapper;
-    private transient DeriveStrategyFactory strategyFactory;
+    private transient CalcFuncStrategyFactory strategyFactory;
 
     @Override
     public void open(Configuration parameters) throws Exception {
@@ -54,93 +49,44 @@ public class DeriveProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<
         registeredTimers = getRuntimeContext().getMapState(
                 new MapStateDescriptor<>("registered-timers", BasicTypeInfo.LONG_TYPE_INFO, BasicTypeInfo.BOOLEAN_TYPE_INFO));
 
-        objectMapper = new ObjectMapper();
-
         // 为每个算子子任务创建并初始化私有的策略工厂
-        strategyFactory = new DeriveStrategyFactory();
+        strategyFactory = new CalcFuncStrategyFactory();
         strategyFactory.init(getRuntimeContext());
     }
 
     @Override
     public void processBroadcastElement(String value, Context ctx, Collector<PointData> out) throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
         JsonNode root = objectMapper.readTree(value);
         String op = root.path("op").asText();
         JsonNode dataNode = root.path("after");
         if (dataNode.isMissingNode() || dataNode.isNull()) return;
-
-        // 根据表结构映射
         int pointType = dataNode.path("point_type").asInt();
-        // 我们只关注派生点位 (point_type = 2)
         if (pointType != 2) {
             return;
         }
-
         String deviceCode = dataNode.path("device_code").asText();
         String ptCode = dataNode.path("point_code").asText();
         int companyId = dataNode.path("company_id").asInt();
-        int valueType = dataNode.path("value_type").asInt();
-        int exprType = dataNode.path("expr_type").asInt();
-        String expr = dataNode.path("expr").asText();
-        String dependsOn = dataNode.path("depends_on").asText();
         int enabled = dataNode.path("enabled").asInt(1);
 
-        BroadcastState<String, Map<String, DeriveRule>> ruleState = ctx.getBroadcastState(RULES_STATE_DESC);
-        Map<String, DeriveRule> deviceRules = ruleState.get(deviceCode);
+        Tuple2<Integer, String> ruleKey = new Tuple2<>(companyId, deviceCode);
+        BroadcastState<Tuple2<Integer, String>, Map<String, DevicePointRule>> ruleState = ctx.getBroadcastState(RULES_STATE_DESC);
+        Map<String, DevicePointRule> deviceRules = ruleState.get(ruleKey);
         if (deviceRules == null) deviceRules = new HashMap<>();
 
         if (enabled == 0 || "d".equals(op)) {
             deviceRules.remove(ptCode);
-            log.info("Rule removed via CDC: device={}, point={}", deviceCode, ptCode);
+            log.info("Rule removed via CDC: company={}, device={}, point={}", companyId, deviceCode, ptCode);
         } else {
-            DeriveRule rule = parseRule(companyId, deviceCode, ptCode, pointType, valueType, exprType, expr, dependsOn, enabled);
+            DevicePointRule rule = DevicePointRule.fromJsonNode(dataNode);
             deviceRules.put(ptCode, rule);
-            log.info("Rule updated via CDC: device={}, point={}, exprType={}", deviceCode, ptCode, exprType);
+            log.info("Rule updated via CDC: company={}, device={}, point={}, exprType={}",
+                    companyId, deviceCode, ptCode, rule.getExprType());
         }
 
-        if (deviceRules.isEmpty()) ruleState.remove(deviceCode);
-        else ruleState.put(deviceCode, deviceRules);
-    }
-
-    private DeriveRule parseRule(int companyId, String deviceCode, String ptCode, int pointType, int valueType, 
-                                 int exprType, String expr, String dependsOn, int enabled) {
-        List<DeriveRule.Dependency> depList = new ArrayList<>();
-        Map<String, String> varMap = new HashMap<>();
-        String sourcePoint = null;
-
-        if (dependsOn != null && dependsOn.trim().startsWith("[")) {
-            try {
-                depList = objectMapper.readValue(dependsOn, new TypeReference<>() {
-                });
-                for (DeriveRule.Dependency dep : depList) {
-                    String pCode = dep.getPoint_code();
-                    if (pCode != null) {
-                        if (exprType == 0 && dep.getVar() != null) {
-                            varMap.put(dep.getVar(), pCode);
-                        }
-                        if (exprType == 1 && sourcePoint == null) {
-                            sourcePoint = pCode;
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("Bad depends_on JSON for {}: {}", ptCode, e.getMessage());
-            }
-        }
-        
-        return DeriveRule.builder()
-                .companyId(companyId)
-                .deviceCode(deviceCode)
-                .pointCode(ptCode)
-                .pointType(pointType)
-                .valueType(valueType)
-                .exprType(exprType)
-                .expr(expr)
-                .dependsOn(dependsOn)
-                .enabled(enabled)
-                .dependencyList(depList)
-                .varMapping(varMap)
-                .sourcePointCode(sourcePoint)
-                .build();
+        if (deviceRules.isEmpty()) ruleState.remove(ruleKey);
+        else ruleState.put(ruleKey, deviceRules);
     }
 
     @Override
@@ -174,20 +120,23 @@ public class DeriveProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<
 
         long completedMinute = timestamp - 60000;
         List<PointData> freshData = windowBuckets.get(completedMinute);
-        
+
         if (freshData != null) {
-            for (PointData p : freshData) pointValueState.put(p.getPoint_code(), p.getValue());
+            for (PointData p : freshData)
+                pointValueState.put(p.getPoint_code(), p.getValue());
         }
 
-        Map<String, DeriveRule> rulesMap = ctx.getBroadcastState(RULES_STATE_DESC).get(deviceCode);
+        Map<String, DevicePointRule> rulesMap = ctx.getBroadcastState(RULES_STATE_DESC).get(key);
         if (rulesMap != null) {
-            for (DeriveRule rule : rulesMap.values()) {
+            for (DevicePointRule rule : rulesMap.values()) {
                 try {
-                    DeriveStrategy strategy = strategyFactory.getStrategy(rule);
+                    CalcFuncStrategy strategy = strategyFactory.getStrategy(rule);
                     if (strategy != null) {
                         strategy.calculate(rule, new CalculationContext() {
                             @Override
-                            public long getTimestamp() { return windowEnd; }
+                            public long getTimestamp() {
+                                return windowEnd;
+                            }
 
                             @Override
                             public void emit(String ptCode, Double value) {
