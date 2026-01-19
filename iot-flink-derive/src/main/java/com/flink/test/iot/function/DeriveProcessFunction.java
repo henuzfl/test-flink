@@ -32,12 +32,11 @@ public class DeriveProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<
             new MapStateDescriptor<>(
                     "rules-broadcast-state",
                     BasicTypeInfo.STRING_TYPE_INFO,
-                    TypeInformation.of(new TypeHint<Map<String, DeriveRule>>() {}));
+                    TypeInformation.of(new TypeHint<>() {
+                    }));
 
     private transient MapState<Long, List<PointData>> windowBuckets; // 按分钟桶
     private transient MapState<String, Double> pointValueState; // 最新值
-    private transient MapState<String, Double> historyValueState; // 单调累加初值
-    private transient MapState<String, Long> indexState; // 单调索引
     private transient MapState<Long, Boolean> registeredTimers; // 避免重复注册 Timer
     private transient ObjectMapper objectMapper;
     private transient DeriveStrategyFactory strategyFactory;
@@ -46,16 +45,11 @@ public class DeriveProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<
     public void open(Configuration parameters) throws Exception {
         windowBuckets = getRuntimeContext().getMapState(
                 new MapStateDescriptor<>("window-buckets", BasicTypeInfo.LONG_TYPE_INFO,
-                        TypeInformation.of(new TypeHint<List<PointData>>() {})));
+                        TypeInformation.of(new TypeHint<>() {
+                        })));
 
         pointValueState = getRuntimeContext().getMapState(
                 new MapStateDescriptor<>("point-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO));
-
-        historyValueState = getRuntimeContext().getMapState(
-                new MapStateDescriptor<>("history-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO));
-
-        indexState = getRuntimeContext().getMapState(
-                new MapStateDescriptor<>("index-state", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.LONG_TYPE_INFO));
 
         registeredTimers = getRuntimeContext().getMapState(
                 new MapStateDescriptor<>("registered-timers", BasicTypeInfo.LONG_TYPE_INFO, BasicTypeInfo.BOOLEAN_TYPE_INFO));
@@ -115,7 +109,8 @@ public class DeriveProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<
 
         if (dependsOn != null && dependsOn.trim().startsWith("[")) {
             try {
-                depList = objectMapper.readValue(dependsOn, new TypeReference<List<DeriveRule.Dependency>>() {});
+                depList = objectMapper.readValue(dependsOn, new TypeReference<>() {
+                });
                 for (DeriveRule.Dependency dep : depList) {
                     String pCode = dep.getPoint_code();
                     if (pCode != null) {

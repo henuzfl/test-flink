@@ -1,9 +1,7 @@
 package com.flink.test.iot.strategy;
 
 import com.flink.test.iot.model.DeriveRule;
-import com.flink.test.iot.model.PointData;
 import org.apache.flink.api.common.functions.RuntimeContext;
-import org.apache.flink.util.Collector;
 
 import java.io.Serializable;
 

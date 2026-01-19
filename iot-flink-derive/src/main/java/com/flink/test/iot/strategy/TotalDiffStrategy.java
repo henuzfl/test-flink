@@ -13,7 +13,7 @@ public class TotalDiffStrategy implements DeriveStrategy {
     private transient MapState<String, Double> historyValueState;
 
     @Override
-    public void open(RuntimeContext ctx) throws Exception {
+    public void open(RuntimeContext ctx) {
         pointValueState = ctx.getMapState(new MapStateDescriptor<>(
                 "point-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO));
 

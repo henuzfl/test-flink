@@ -109,12 +109,7 @@ public class IotDeriveJob {
         // ========================
         DataStream<PointData> resultStream = pointStream
                 // 使用 Tuple2 作为 Key 避免字符串拼接
-                .keyBy(new KeySelector<PointData, Tuple2<Integer, String>>() {
-                    @Override
-                    public Tuple2<Integer, String> getKey(PointData value) {
-                        return new Tuple2<>(value.getCompany_id(), value.getDevice_code());
-                    }
-                })
+                .keyBy((KeySelector<PointData, Tuple2<Integer, String>>) value -> new Tuple2<>(value.getCompany_id(), value.getDevice_code()))
                 .connect(broadcastRules)
                 .process(new DeriveProcessFunction());
 
