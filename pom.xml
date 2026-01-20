@@ -13,7 +13,7 @@
         <module>test-flink-common</module>
         <module>test-flink-job-kafka</module>
         <module>test-flink-job-state</module>
-        <module>iot-flink-derive</module>
+        <module>test-flink-iot</module>
     </modules>
 
     <properties>
