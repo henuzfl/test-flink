@@ -1,0 +1,8 @@
+nacos:
+  server-addr: "10.19.93.240:8848"
+  username: "nacos"
+  password: "admin1001"
+  namespace: "zfl"
+  data-id: "test-flink-iot.yml"
+  group: "DEFAULT_GROUP"
+  file-extension: "yml"

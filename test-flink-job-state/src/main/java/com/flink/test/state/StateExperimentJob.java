@@ -37,14 +37,19 @@ public class StateExperimentJob {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     public static void main(String[] args) throws Exception {
+        // Load Configuration
+        org.apache.flink.api.java.utils.ParameterTool params = com.flink.test.common.ConfigLoader.loadConfig(args, "application.yml");
+
+
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.getConfig().setGlobalJobParameters(params);
 
         // 1. Checkpoint Configuration 
         // 只要集群配置了 state.checkpoints.dir，这里只需开启即可。
-        env.enableCheckpointing(10000); // Checkpoint every 10 seconds
+        env.enableCheckpointing(params.getLong("checkpoint.interval", 10000));
         env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
-        env.getCheckpointConfig().setMinPauseBetweenCheckpoints(5000); // Minimum pause between checkpoints: 5 seconds
-        env.getCheckpointConfig().setCheckpointTimeout(60000); // Checkpoint timeout: 60 seconds
+        env.getCheckpointConfig().setMinPauseBetweenCheckpoints(params.getLong("checkpoint.min.pause", 5000));
+        env.getCheckpointConfig().setCheckpointTimeout(params.getLong("checkpoint.timeout", 60000));
         env.getCheckpointConfig().setMaxConcurrentCheckpoints(1); // Only one checkpoint at a time
         env.getCheckpointConfig().setExternalizedCheckpointCleanup(
                 CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION); // Retain checkpoint on cancellation
@@ -57,13 +62,12 @@ public class StateExperimentJob {
 
         // 2. Kafka Source
         KafkaSource<String> source = KafkaSource.<String>builder()
-                .setBootstrapServers(FlinkConstants.DEFAULT_KAFKA_SERVER)
-                .setTopics(FlinkConstants.INPUT_TOPIC)
-                .setGroupId("state-experiment-group")
+                .setBootstrapServers(params.get("kafka.bootstrap.servers", FlinkConstants.DEFAULT_KAFKA_SERVER))
+                .setTopics(params.get("kafka.input.topic", FlinkConstants.INPUT_TOPIC))
+                .setGroupId(params.get("kafka.group.id", "state-experiment-group"))
                 .setStartingOffsets(OffsetsInitializer.latest())
                 .setValueOnlyDeserializer(new SimpleStringSchema())
                 .build();
-
         DataStream<String> rawStream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "Kafka Source");
 
         // 3. Process Logic
@@ -83,25 +87,26 @@ public class StateExperimentJob {
                 .keyBy(DeviceData::getDeviceId)
                 .process(new AccumulatorFunction());
 
+
         // 4. Sink (Print to stdout for easy experimentation)
         resultStream.print();
 
         // 5. Kafka Sink
         // Note: EXACTLY_ONCE needs checkpointing enabled (already enabled above) and a transactionalIdPrefix.
         Properties kafkaProps = new Properties();
-        kafkaProps.setProperty("transaction.timeout.ms", "600000"); // 10 min
+        kafkaProps.setProperty("transaction.timeout.ms", params.get("kafka.transaction.timeout.ms", "600000"));
 
         KafkaSink<String> kafkaSink = KafkaSink.<String>builder()
-                .setBootstrapServers(FlinkConstants.DEFAULT_KAFKA_SERVER)
+                .setBootstrapServers(params.get("kafka.bootstrap.servers", FlinkConstants.DEFAULT_KAFKA_SERVER))
                 .setKafkaProducerConfig(kafkaProps)
                 .setRecordSerializer(
                         KafkaRecordSerializationSchema.builder()
-                                .setTopic(FlinkConstants.VALUE_AGG_OUTPUT_TOPIC)
+                                .setTopic(params.get("kafka.output.topic", FlinkConstants.VALUE_AGG_OUTPUT_TOPIC))
                                 .setValueSerializationSchema(new SimpleStringSchema())
                                 .build()
                 )
                 .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
-                .setTransactionalIdPrefix("state-experiment-job")
+                .setTransactionalIdPrefix(params.get("kafka.transaction.id.prefix", "state-experiment-job"))
                 .build();
 
         resultStream.sinkTo(kafkaSink);
@@ -109,6 +114,7 @@ public class StateExperimentJob {
         LOG.info("Starting State Experiment Job...");
         env.execute("Flink State Experiment Job");
     }
+
 
     /**
      * State-based function to accumulate values.

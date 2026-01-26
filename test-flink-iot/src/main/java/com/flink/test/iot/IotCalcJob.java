@@ -1,6 +1,7 @@
 package com.flink.test.iot;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.flink.test.common.ConfigLoader;
 import com.flink.test.iot.function.CalcProcessFunction;
 import com.flink.test.iot.model.PointData;
 import lombok.extern.slf4j.Slf4j;
@@ -9,6 +10,7 @@ import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.cdc.connectors.mysql.source.MySqlSource;
 import org.apache.flink.cdc.connectors.mysql.table.StartupOptions;
 import org.apache.flink.cdc.debezium.JsonDebeziumDeserializationSchema;
@@ -31,20 +33,27 @@ public class IotCalcJob {
     private static final String OUTPUT_TOPIC = "output-topic-3";
 
     public static void main(String[] args) throws Exception {
+        // ========================
+        // 0️⃣ Load Configuration
+        // ========================
+        ParameterTool params = ConfigLoader.loadConfig(args, "application.yml");
+
+
         /**
          * 创建 Flink 流执行环境
          */
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
+        env.getConfig().setGlobalJobParameters(params);
 
         final ObjectMapper mapper = new ObjectMapper();
         // ========================
         // 1️⃣ Kafka Source
         // ========================
         KafkaSource<String> kafkaSource = KafkaSource.<String>builder()
-                .setBootstrapServers("10.19.93.228:9092")
-                .setTopics("demo-flink-02")
-                .setGroupId("iot-derive-group-1")
+                .setBootstrapServers(params.get("kafka.bootstrap.servers", "10.19.93.228:9092"))
+                .setTopics(params.get("kafka.input.topic", "demo-flink-02"))
+                .setGroupId(params.get("kafka.group.id", "iot-derive-group-1"))
                 .setStartingOffsets(OffsetsInitializer.latest()) // 最新偏移量启动
                 .setValueOnlyDeserializer(new org.apache.flink.api.common.serialization.SimpleStringSchema())
                 .build();
@@ -73,13 +82,13 @@ public class IotCalcJob {
         jdbcProps.setProperty("characterEncoding", "UTF-8");
 
         MySqlSource<String> mySqlSource = MySqlSource.<String>builder()
-                .hostname("10.19.93.240")
-                .port(3306)
-                .databaseList("demo_flink")
-                .tableList("demo_flink.iot_point_def")
-                .username("root")
-                .password("ih9PExr0RNojo20r%")
-                .serverTimeZone("Asia/Shanghai")
+                .hostname(params.get("mysql.hostname", "10.19.93.240"))
+                .port(params.getInt("mysql.port", 3306))
+                .databaseList(params.get("mysql.database", "demo_flink"))
+                .tableList(params.get("mysql.table", "demo_flink.iot_point_def"))
+                .username(params.get("mysql.username", "root"))
+                .password(params.get("mysql.password", "ih9PExr0RNojo20r%"))
+                .serverTimeZone(params.get("mysql.timezone", "Asia/Shanghai"))
                 .jdbcProperties(jdbcProps)
                 .deserializer(new JsonDebeziumDeserializationSchema())
                 .startupOptions(StartupOptions.initial())
@@ -131,12 +140,13 @@ public class IotCalcJob {
         kafkaProps.put("linger.ms", "50");
         kafkaProps.put("batch.size", "16384");
 
+        String outputTopic = params.get("kafka.output.topic", OUTPUT_TOPIC);
         KafkaSink<String> kafkaSink = KafkaSink.<String>builder()
-                .setBootstrapServers("10.19.93.228:9092")
+                .setBootstrapServers(params.get("kafka.bootstrap.servers", "10.19.93.228:9092"))
                 .setKafkaProducerConfig(kafkaProps)
                 .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE) // 至少一次
                 .setRecordSerializer(KafkaRecordSerializationSchema.builder()
-                        .setTopic(OUTPUT_TOPIC)
+                        .setTopic(outputTopic)
                         .setValueSerializationSchema(new SimpleStringSchema())
                         .build()
                 )
@@ -148,7 +158,8 @@ public class IotCalcJob {
         // 调试输出（生产可注释）
         resultStream.print("Calc Result");
 
-        log.info("启动 IoT Flink 衍生计算作业 (CDC Enabled, Flink 1.19), 输出 topic: {}", OUTPUT_TOPIC);
+        log.info("启动 IoT Flink 衍生计算作业 (CDC Enabled, Flink 1.19), 输出 topic: {}", outputTopic);
         env.execute("IoT Calc Job");
+
     }
 }
