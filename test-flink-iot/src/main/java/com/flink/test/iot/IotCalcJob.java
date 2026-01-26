@@ -6,6 +6,7 @@ import com.flink.test.iot.function.CalcProcessFunction;
 import com.flink.test.iot.model.PointData;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.functions.AggregateFunction;
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -20,9 +21,20 @@ import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
-import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.assigners.SlidingProcessingTimeWindows;
+import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+import org.apache.flink.util.Collector;
+
+import java.time.Duration;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.ArrayList;
 
 import java.util.Objects;
 import java.util.Properties;
@@ -61,16 +73,21 @@ public class IotCalcJob {
          * 2️⃣ 读取 Kafka 点位数据流，并解析为 PointData 对象
          */
         DataStream<PointData> pointStream = env.fromSource(
-                kafkaSource,
-                WatermarkStrategy.noWatermarks(),
-                "iot data source"
-        ).map(value -> {
-            try {
-                return mapper.readValue(value, PointData.class);
-            } catch (Exception e) {
-                return null;
-            }
-        }).filter(Objects::nonNull);
+                        kafkaSource,
+                        WatermarkStrategy.noWatermarks(),
+                        "iot data source"
+                ).map(value -> {
+                    try {
+                        return mapper.readValue(value, PointData.class);
+                    } catch (Exception e) {
+                        return null;
+                    }
+                }).filter(Objects::nonNull).
+                assignTimestampsAndWatermarks(
+                        WatermarkStrategy
+                                .<PointData>forBoundedOutOfOrderness(Duration.ofSeconds(30))
+                                .withTimestampAssigner((event, ts) -> event.getTs())
+                );
 
         // ========================
         // 3️⃣ Flink CDC Source
@@ -103,20 +120,35 @@ public class IotCalcJob {
         );
 
         // 广播规则状态
-        BroadcastStream<String> broadcastRules = ruleStream.broadcast(CalcProcessFunction.RULES_STATE_DESC);
+        org.apache.flink.streaming.api.datastream.BroadcastStream<String> broadcastRules = ruleStream.broadcast(CalcProcessFunction.RULES_STATE_DESC);
 
         // ========================
-        // 4️⃣ 计算
+        // 4️⃣ 窗口处理：按设备聚合，收集 15 分钟内所有点位的最新值，每分钟触发一次
         // ========================
-        DataStream<PointData> resultStream = pointStream
+        DataStream<Collection<PointData>> windowedStream = pointStream
                 .keyBy(new KeySelector<PointData, Tuple2<Integer, String>>() {
                     @Override
-                    public Tuple2<Integer, String> getKey(PointData value) {
-                        return new Tuple2<>(value.getCompany_id(), value.getDevice_code());
+                    public Tuple2<Integer, String> getKey(PointData p) {
+                        return new Tuple2<>(p.getCompany_id(), p.getDevice_code());
+                    }
+                })
+                .window(SlidingEventTimeWindows.of(Time.minutes(15), Time.minutes(1)))
+                .aggregate(new LatestPointAgg());
+
+        // ========================
+        // 5️⃣ 计算
+        // ========================
+        DataStream<PointData> resultStream = windowedStream
+                .keyBy(new KeySelector<Collection<PointData>, Tuple2<Integer, String>>() {
+                    @Override
+                    public Tuple2<Integer, String> getKey(Collection<PointData> coll) {
+                        PointData first = coll.iterator().next();
+                        return new Tuple2<>(first.getCompany_id(), first.getDevice_code());
                     }
                 })
                 .connect(broadcastRules)
                 .process(new CalcProcessFunction());
+
 
         // ========================
         // 5️⃣ Kafka Sink
@@ -161,5 +193,39 @@ public class IotCalcJob {
         log.info("启动 IoT Flink 衍生计算作业 (CDC Enabled, Flink 1.19), 输出 topic: {}", outputTopic);
         env.execute("IoT Calc Job");
 
+    }
+
+    public static class LatestPointAgg
+            implements AggregateFunction<PointData, Map<String, PointData>, Collection<PointData>> {
+
+        @Override
+        public Map<String, PointData> createAccumulator() {
+            return new HashMap<>();
+        }
+
+        @Override
+        public Map<String, PointData> add(PointData value, Map<String, PointData> acc) {
+            PointData cur = acc.get(value.getPoint_code());
+            if (cur == null || value.getTs() >= cur.getTs()) {
+                acc.put(value.getPoint_code(), value);
+            }
+            return acc;
+        }
+
+        @Override
+        public Collection<PointData> getResult(Map<String, PointData> acc) {
+            return new ArrayList<>(acc.values());
+        }
+
+        @Override
+        public Map<String, PointData> merge(Map<String, PointData> a, Map<String, PointData> b) {
+            for (Map.Entry<String, PointData> e : b.entrySet()) {
+                PointData cur = a.get(e.getKey());
+                if (cur == null || e.getValue().getTs() >= cur.getTs()) {
+                    a.put(e.getKey(), e.getValue());
+                }
+            }
+            return a;
+        }
     }
 }

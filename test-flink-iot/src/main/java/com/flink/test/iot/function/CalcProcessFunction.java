@@ -21,7 +21,7 @@ import org.apache.flink.util.Collector;
 import java.util.*;
 
 @Slf4j
-public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<Integer, String>, PointData, String, PointData> {
+public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<Integer, String>, Collection<PointData>, String, PointData> {
 
     public static final MapStateDescriptor<Tuple2<Integer, String>, Map<String, DevicePointRule>> RULES_STATE_DESC =
             new MapStateDescriptor<>(
@@ -31,23 +31,13 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<In
                     TypeInformation.of(new TypeHint<Map<String, DevicePointRule>>() {
                     }));
 
-    private transient MapState<Long, List<PointData>> windowBuckets; // 按分钟桶
-    private transient MapState<String, Double> pointValueState; // 最新值
-    private transient MapState<Long, Boolean> registeredTimers; // 避免重复注册 Timer
+    private transient MapState<String, Double> pointValueState; // 存储各点位的最新值（来自于上游 15 分钟窗口聚合后的全量快照）
     private transient CalcFuncStrategyFactory strategyFactory;
 
     @Override
     public void open(Configuration parameters) throws Exception {
-        windowBuckets = getRuntimeContext().getMapState(
-                new MapStateDescriptor<>("window-buckets", BasicTypeInfo.LONG_TYPE_INFO,
-                        TypeInformation.of(new TypeHint<>() {
-                        })));
-
         pointValueState = getRuntimeContext().getMapState(
                 new MapStateDescriptor<>("point-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO));
-
-        registeredTimers = getRuntimeContext().getMapState(
-                new MapStateDescriptor<>("registered-timers", BasicTypeInfo.LONG_TYPE_INFO, BasicTypeInfo.BOOLEAN_TYPE_INFO));
 
         // 为每个算子子任务创建并初始化私有的策略工厂
         strategyFactory = new CalcFuncStrategyFactory();
@@ -90,43 +80,21 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<In
     }
 
     @Override
-    public void processElement(PointData value, ReadOnlyContext ctx, Collector<PointData> out) throws Exception {
-        long currentProcTime = ctx.timerService().currentProcessingTime();
-        long minuteTs = (currentProcTime / 60000) * 60000;
+    public void processElement(Collection<PointData> values, ReadOnlyContext ctx, Collector<PointData> out) throws Exception {
+        if (values == null || values.isEmpty()) return;
 
-        List<PointData> bucket = windowBuckets.get(minuteTs);
-        if (bucket == null) bucket = new ArrayList<>();
-        bucket.add(value);
-        windowBuckets.get(minuteTs); // Trigger access for some Flink versions
-        windowBuckets.put(minuteTs, bucket);
-
-        if (registeredTimers.get(minuteTs) == null) {
-            long triggerTs = minuteTs + 60000;
-            ctx.timerService().registerProcessingTimeTimer(triggerTs);
-            registeredTimers.put(minuteTs, true);
-            log.info("ProcessingTime: Registered timer for {} at bucket {}", triggerTs, minuteTs);
+        // 获取最大的时间戳作为本次计算的时间戳
+        long maxTs = values.stream().mapToLong(PointData::getTs).max().orElse(System.currentTimeMillis());
+        
+        // 1. 同时更新本次快照中所有点位的状态
+        for (PointData value : values) {
+            pointValueState.put(value.getPoint_code(), value.getValue());
         }
-    }
 
-    @Override
-    public void onTimer(long timestamp, OnTimerContext ctx, Collector<PointData> out) throws Exception {
-        long windowSize = 15 * 60_000L;
-        long windowStart = timestamp - windowSize;
-        long windowEnd = timestamp;
-
+        // 2. 触发对应设备规则的计算（只触发一次！）
         Tuple2<Integer, String> key = ctx.getCurrentKey();
-        Integer companyId = key.f0;
-        String deviceCode = key.f1;
-
-        long completedMinute = timestamp - 60000;
-        List<PointData> freshData = windowBuckets.get(completedMinute);
-
-        if (freshData != null) {
-            for (PointData p : freshData)
-                pointValueState.put(p.getPoint_code(), p.getValue());
-        }
-
         Map<String, DevicePointRule> rulesMap = ctx.getBroadcastState(RULES_STATE_DESC).get(key);
+
         if (rulesMap != null) {
             for (DevicePointRule rule : rulesMap.values()) {
                 try {
@@ -135,18 +103,23 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<In
                         strategy.calculate(rule, new CalculationContext() {
                             @Override
                             public long getTimestamp() {
-                                return windowEnd;
+                                return maxTs;
                             }
 
                             @Override
-                            public void emit(String ptCode, Double value) {
+                            public void emit(String ptCode, Double calcValue) {
                                 PointData p = new PointData();
-                                p.setCompany_id(companyId);
-                                p.setDevice_code(deviceCode);
+                                p.setCompany_id(key.f0);
+                                p.setDevice_code(key.f1);
                                 p.setPoint_code(ptCode);
-                                p.setValue(value);
-                                p.setTs(windowEnd);
+                                p.setValue(calcValue);
+                                p.setTs(maxTs);
                                 out.collect(p);
+                                
+                                // 同时将计算出的衍生点位存回状态，以支持链式计算
+                                try {
+                                    pointValueState.put(ptCode, calcValue);
+                                } catch (Exception ignored) {}
                             }
                         });
                     }
@@ -155,15 +128,7 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<In
                 }
             }
         }
-
-        // 清理超时桶
-        Iterator<Long> it = windowBuckets.keys().iterator();
-        while (it.hasNext()) {
-            Long tsKey = it.next();
-            if (tsKey < windowStart) it.remove();
-        }
-
-        // 移除已触发 Timer
-        registeredTimers.remove(completedMinute);
     }
+
+
 }
