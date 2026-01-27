@@ -29,7 +29,7 @@ public class DevicePointRule implements Serializable {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     // 数据库原始字段
-    private Integer companyId;      // company_id
+    private String companyId;      // company_id
     private String deviceCode;      // device_code
     private String pointCode;       // point_code
     private Integer pointType;      // point_type: 1=原始点位，2=派生点位
@@ -50,7 +50,7 @@ public class DevicePointRule implements Serializable {
     public static DevicePointRule fromJsonNode(JsonNode dataNode) {
         String deviceCode = dataNode.path("device_code").asText();
         String ptCode = dataNode.path("point_code").asText();
-        int companyId = dataNode.path("company_id").asInt();
+        String companyId = dataNode.path("company_id").asText();
         int pointType = dataNode.path("point_type").asInt();
         int valueType = dataNode.path("value_type").asInt();
         int exprType = dataNode.path("expr_type").asInt();

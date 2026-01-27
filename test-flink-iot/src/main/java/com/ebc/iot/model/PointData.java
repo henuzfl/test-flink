@@ -19,9 +19,15 @@ import java.io.Serializable;
 public class PointData implements Serializable {
     private static final long serialVersionUID = 1L;
     
-    private Integer company_id;
-    private String device_code;
-    private String point_code;
-    private Double value;
-    private Long ts;
+    private String company_id;
+    private String device_id;
+    private String project_id;
+    private Double property_num_value;
+    private String data_type;
+    private String property_value;
+    private Long create_date;
+    private Long data_date;
+    private String gateway_code;
+    private String property_name;
+    private Long timestamp;
 }

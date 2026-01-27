@@ -2,7 +2,7 @@ package com.ebc.iot.function;
 
 import com.ebc.iot.function.strategy.ArithmeticCalcFunc;
 import com.ebc.iot.function.strategy.CalcFuncStrategy;
-import com.flink.test.iot.function.strategy.*;
+import com.ebc.iot.function.strategy.*;
 import com.ebc.iot.function.strategy.diff.DayDiffCalcFunc;
 import com.ebc.iot.function.strategy.diff.MonthDiffCalcFunc;
 import com.ebc.iot.function.strategy.diff.TotalDiffCalcFunc;

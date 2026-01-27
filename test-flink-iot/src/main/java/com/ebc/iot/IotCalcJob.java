@@ -80,15 +80,30 @@ public class IotCalcJob {
                         "iot data source"
                 ).map(value -> {
                     try {
-                        return mapper.readValue(value, PointData.class);
+                        PointData data = mapper.readValue(value, PointData.class);
+                        if (data == null) {
+                            log.warn("Parsed null PointData from: {}", value);
+                            return null;
+                        }
+                        if (data.getCompany_id() == null || data.getDevice_id() == null || data.getTimestamp() == null) {
+                            log.warn("PointData missing critical fields: {}", data);
+                            return null;
+                        }
+                        return data;
                     } catch (Exception e) {
+                        log.error("Failed to parse Kafka message: {}, error: {}", value, e.getMessage());
                         return null;
                     }
                 }).filter(Objects::nonNull).
                 assignTimestampsAndWatermarks(
                         WatermarkStrategy
                                 .<PointData>forBoundedOutOfOrderness(Duration.ofSeconds(30))
-                                .withTimestampAssigner((event, ts) -> event.getTs())
+                                .withTimestampAssigner((event, ts) -> {
+                                    if (event.getTimestamp() == null) {
+                                        return System.currentTimeMillis();
+                                    }
+                                    return event.getTimestamp();
+                                })
                 );
 
         // ========================
@@ -128,10 +143,10 @@ public class IotCalcJob {
         // 4️⃣ 窗口处理：按设备聚合，收集 15 分钟内所有点位的最新值，每分钟触发一次
         // ========================
         DataStream<Collection<PointData>> windowedStream = pointStream
-                .keyBy(new KeySelector<PointData, Tuple2<Integer, String>>() {
+                .keyBy(new KeySelector<PointData, Tuple2<String, String>>() {
                     @Override
-                    public Tuple2<Integer, String> getKey(PointData p) {
-                        return new Tuple2<>(p.getCompany_id(), p.getDevice_code());
+                    public Tuple2<String, String> getKey(PointData p) {
+                        return new Tuple2<>(p.getCompany_id(), p.getDevice_id());
                     }
                 })
                 .window(SlidingEventTimeWindows.of(Time.minutes(15), Time.minutes(1)))
@@ -141,11 +156,16 @@ public class IotCalcJob {
         // 5️⃣ 计算
         // ========================
         DataStream<PointData> resultStream = windowedStream
-                .keyBy(new KeySelector<Collection<PointData>, Tuple2<Integer, String>>() {
+                .keyBy(new KeySelector<Collection<PointData>, Tuple2<String, String>>() {
                     @Override
-                    public Tuple2<Integer, String> getKey(Collection<PointData> coll) {
+                    public Tuple2<String, String> getKey(Collection<PointData> coll) {
+                        if (coll == null || coll.isEmpty()) {
+                            return new Tuple2<>("unknown", "unknown");
+                        }
                         PointData first = coll.iterator().next();
-                        return new Tuple2<>(first.getCompany_id(), first.getDevice_code());
+                        String companyId = first.getCompany_id() != null ? first.getCompany_id() : "unknown";
+                        String deviceId = first.getDevice_id() != null ? first.getDevice_id() : "unknown";
+                        return new Tuple2<>(companyId, deviceId);
                     }
                 })
                 .connect(broadcastRules)
@@ -207,9 +227,15 @@ public class IotCalcJob {
 
         @Override
         public Map<String, PointData> add(PointData value, Map<String, PointData> acc) {
-            PointData cur = acc.get(value.getPoint_code());
-            if (cur == null || value.getTs() >= cur.getTs()) {
-                acc.put(value.getPoint_code(), value);
+            String ptName = value.getProperty_name();
+            if (ptName == null) return acc;
+            
+            PointData cur = acc.get(ptName);
+            long newTs = value.getTimestamp() != null ? value.getTimestamp() : 0L;
+            long curTs = (cur != null && cur.getTimestamp() != null) ? cur.getTimestamp() : -1L;
+            
+            if (cur == null || newTs >= curTs) {
+                acc.put(ptName, value);
             }
             return acc;
         }
@@ -223,7 +249,7 @@ public class IotCalcJob {
         public Map<String, PointData> merge(Map<String, PointData> a, Map<String, PointData> b) {
             for (Map.Entry<String, PointData> e : b.entrySet()) {
                 PointData cur = a.get(e.getKey());
-                if (cur == null || e.getValue().getTs() >= cur.getTs()) {
+                if (cur == null || e.getValue().getTimestamp() >= cur.getTimestamp()) {
                     a.put(e.getKey(), e.getValue());
                 }
             }

@@ -21,12 +21,12 @@ import org.apache.flink.util.Collector;
 import java.util.*;
 
 @Slf4j
-public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<Integer, String>, Collection<PointData>, String, PointData> {
+public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<String, String>, Collection<PointData>, String, PointData> {
 
-    public static final MapStateDescriptor<Tuple2<Integer, String>, Map<String, DevicePointRule>> RULES_STATE_DESC =
+    public static final MapStateDescriptor<Tuple2<String, String>, Map<String, DevicePointRule>> RULES_STATE_DESC =
             new MapStateDescriptor<>(
                     "rules-broadcast-state",
-                    TypeInformation.of(new TypeHint<Tuple2<Integer, String>>() {
+                    TypeInformation.of(new TypeHint<Tuple2<String, String>>() {
                     }),
                     TypeInformation.of(new TypeHint<Map<String, DevicePointRule>>() {
                     }));
@@ -60,8 +60,8 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<In
         int companyId = dataNode.path("company_id").asInt();
         int enabled = dataNode.path("enabled").asInt(1);
 
-        Tuple2<Integer, String> ruleKey = new Tuple2<>(companyId, deviceCode);
-        BroadcastState<Tuple2<Integer, String>, Map<String, DevicePointRule>> ruleState = ctx.getBroadcastState(RULES_STATE_DESC);
+        Tuple2<String, String> ruleKey = new Tuple2<>(String.valueOf(companyId), deviceCode);
+        BroadcastState<Tuple2<String, String>, Map<String, DevicePointRule>> ruleState = ctx.getBroadcastState(RULES_STATE_DESC);
         Map<String, DevicePointRule> deviceRules = ruleState.get(ruleKey);
         if (deviceRules == null) deviceRules = new HashMap<>();
 
@@ -84,18 +84,27 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<In
         if (values == null || values.isEmpty()) return;
 
         // 获取最大的时间戳作为本次计算的时间戳
-        long maxTs = values.stream().mapToLong(PointData::getTs).max().orElse(System.currentTimeMillis());
+        long maxTs = values.stream()
+                .map(PointData::getTimestamp)
+                .filter(Objects::nonNull)
+                .mapToLong(Long::longValue)
+                .max().orElse(System.currentTimeMillis());
         
         // 1. 同时更新本次快照中所有点位的状态
         for (PointData value : values) {
-            pointValueState.put(value.getPoint_code(), value.getValue());
+            pointValueState.put(value.getProperty_name(), value.getProperty_num_value());
         }
 
         // 2. 触发对应设备规则的计算（只触发一次！）
-        Tuple2<Integer, String> key = ctx.getCurrentKey();
+        Tuple2<String, String> key = ctx.getCurrentKey();
         Map<String, DevicePointRule> rulesMap = ctx.getBroadcastState(RULES_STATE_DESC).get(key);
 
         if (rulesMap != null) {
+            // 从输入数据中提取一些公共字段，如 project_id, gateway_code
+            PointData firstData = values.iterator().next();
+            String projectId = firstData.getProject_id();
+            String gatewayCode = firstData.getGateway_code();
+
             for (DevicePointRule rule : rulesMap.values()) {
                 try {
                     CalcFuncStrategy strategy = strategyFactory.getStrategy(rule);
@@ -110,10 +119,16 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<In
                             public void emit(String ptCode, Double calcValue) {
                                 PointData p = new PointData();
                                 p.setCompany_id(key.f0);
-                                p.setDevice_code(key.f1);
-                                p.setPoint_code(ptCode);
-                                p.setValue(calcValue);
-                                p.setTs(maxTs);
+                                p.setDevice_id(key.f1);
+                                p.setProject_id(projectId);
+                                p.setProperty_name(ptCode);
+                                p.setProperty_num_value(calcValue);
+                                p.setProperty_value(calcValue != null ? String.valueOf(calcValue) : null);
+                                p.setData_type("calc");
+                                p.setGateway_code(gatewayCode);
+                                p.setCreate_date(System.currentTimeMillis());
+                                p.setData_date(maxTs);
+                                p.setTimestamp(maxTs);
                                 out.collect(p);
                                 
                                 // 同时将计算出的衍生点位存回状态，以支持链式计算
