@@ -1,4 +1,4 @@
-package com.flink.test.iot.model;
+package com.ebc.iot.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;

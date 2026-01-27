@@ -1,9 +1,9 @@
-package com.flink.test.iot;
+package com.ebc.iot;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.flink.test.common.ConfigLoader;
-import com.flink.test.iot.function.CalcProcessFunction;
-import com.flink.test.iot.model.PointData;
+import com.ebc.common.ConfigLoader;
+import com.ebc.iot.function.CalcProcessFunction;
+import com.ebc.iot.model.PointData;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.AggregateFunction;
@@ -25,11 +25,7 @@ import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
-import org.apache.flink.streaming.api.windowing.assigners.SlidingProcessingTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
-import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
-import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
-import org.apache.flink.util.Collector;
 
 import java.time.Duration;
 import java.util.Collection;

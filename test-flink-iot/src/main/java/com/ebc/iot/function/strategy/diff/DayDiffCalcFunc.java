@@ -1,8 +1,8 @@
-package com.flink.test.iot.function.strategy.diff;
+package com.ebc.iot.function.strategy.diff;
 
-import com.flink.test.iot.function.strategy.CalcFuncStrategy;
-import com.flink.test.iot.function.strategy.CalculationContext;
-import com.flink.test.iot.model.DevicePointRule;
+import com.ebc.iot.function.strategy.CalcFuncStrategy;
+import com.ebc.iot.function.strategy.CalculationContext;
+import com.ebc.iot.model.DevicePointRule;
 import org.apache.flink.api.common.functions.RuntimeContext;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;

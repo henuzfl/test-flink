@@ -1,4 +1,4 @@
-package com.flink.test.common;
+package com.ebc.common;
 
 import com.alibaba.nacos.api.NacosFactory;
 import com.alibaba.nacos.api.config.ConfigService;
