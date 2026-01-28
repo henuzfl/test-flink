@@ -12,6 +12,7 @@
     <modules>
         <module>test-flink-common</module>
         <module>test-flink-iot</module>
+        <module>test-flink-rule-sync</module>
     </modules>
 
     <properties>

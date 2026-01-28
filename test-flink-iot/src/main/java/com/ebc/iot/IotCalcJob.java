@@ -1,9 +1,9 @@
 package com.ebc.iot;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ebc.common.ConfigLoader;
+import com.ebc.common.config.ConfigLoader;
 import com.ebc.iot.function.CalcProcessFunction;
-import com.ebc.iot.model.PointData;
+import com.ebc.common.model.PointData;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.AggregateFunction;

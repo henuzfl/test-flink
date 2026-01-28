@@ -2,12 +2,11 @@ package com.ebc.iot.function;
 
 import com.ebc.iot.function.strategy.ArithmeticCalcFunc;
 import com.ebc.iot.function.strategy.CalcFuncStrategy;
-import com.ebc.iot.function.strategy.*;
 import com.ebc.iot.function.strategy.diff.DayDiffCalcFunc;
 import com.ebc.iot.function.strategy.diff.MonthDiffCalcFunc;
 import com.ebc.iot.function.strategy.diff.TotalDiffCalcFunc;
 import com.ebc.iot.function.strategy.diff.YearDiffCalcFunc;
-import com.ebc.iot.model.DevicePointRule;
+import com.ebc.common.model.DevicePointRule;
 import org.apache.flink.api.common.functions.RuntimeContext;
 
 import java.io.Serializable;

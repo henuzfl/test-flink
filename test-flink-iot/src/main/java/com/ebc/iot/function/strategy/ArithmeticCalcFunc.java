@@ -1,6 +1,6 @@
 package com.ebc.iot.function.strategy;
 
-import com.ebc.iot.model.DevicePointRule;
+import com.ebc.common.model.DevicePointRule;
 import net.objecthunter.exp4j.Expression;
 import net.objecthunter.exp4j.ExpressionBuilder;
 import org.apache.flink.api.common.functions.RuntimeContext;

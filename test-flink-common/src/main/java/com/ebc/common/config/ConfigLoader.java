@@ -1,4 +1,4 @@
-package com.ebc.common;
+package com.ebc.common.config;
 
 import com.alibaba.nacos.api.NacosFactory;
 import com.alibaba.nacos.api.config.ConfigService;

@@ -1,0 +1,20 @@
+flink:
+  parallelism: 1
+  checkpoint:
+    interval: 60000
+    mode: EXACTLY_ONCE
+
+source-mysql:
+  hostname: 10.19.93.240
+  port: 3306
+  database: zhny_business_lak
+  username: root
+  password: ih9PExr0RNojo20r%
+
+target-mysql:
+  hostname: 10.19.93.240
+  port: 3306
+  database: demo_flink
+  username: root
+  password: ih9PExr0RNojo20r%
+  table: iot_point_def_test

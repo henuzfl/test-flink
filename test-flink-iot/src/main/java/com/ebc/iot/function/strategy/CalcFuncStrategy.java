@@ -1,6 +1,6 @@
 package com.ebc.iot.function.strategy;
 
-import com.ebc.iot.model.DevicePointRule;
+import com.ebc.common.model.DevicePointRule;
 import org.apache.flink.api.common.functions.RuntimeContext;
 
 import java.io.Serializable;

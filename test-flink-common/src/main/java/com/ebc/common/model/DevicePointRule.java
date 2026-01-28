@@ -1,4 +1,4 @@
-package com.ebc.iot.model;
+package com.ebc.common.model;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
