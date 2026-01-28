@@ -83,7 +83,7 @@ public class RuleSyncJob {
                 .process(new FullRuleSyncFunction());
 
         // 3. 写入目标数据库 (demo_flink.iot_point_def)
-//        configureSink(syncStream, params);
+        configureSink(syncStream, params);
 
         env.execute("Full Rule Sync Job");
     }
@@ -92,7 +92,7 @@ public class RuleSyncJob {
         String targetUrl = String.format("jdbc:mysql://%s:%d/%s?useSSL=false&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8",
                 params.get("target-mysql.hostname"), params.getInt("target-mysql.port"), params.get("target-mysql.database"));
 
-        String upsertSql = "INSERT INTO iot_point_def (company_id, device_code, point_code, point_type, value_type, expr_type, expr, depends_on, enabled) " +
+        String upsertSql = "INSERT INTO iot_point_def_test (company_id, device_code, point_code, point_type, value_type, expr_type, expr, depends_on, enabled) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
                 "ON DUPLICATE KEY UPDATE " +
                 "point_type=VALUES(point_type), value_type=VALUES(value_type), expr_type=VALUES(expr_type), " +
