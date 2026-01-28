@@ -17,6 +17,9 @@ import org.apache.flink.cdc.connectors.mysql.table.StartupOptions;
 import org.apache.flink.cdc.debezium.JsonDebeziumDeserializationSchema;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.base.DeliveryGuarantee;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.util.Collector;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
@@ -29,6 +32,7 @@ import org.apache.flink.streaming.api.windowing.time.Time;
 
 import java.time.Duration;
 import java.util.Collection;
+import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.ArrayList;
@@ -78,23 +82,47 @@ public class IotCalcJob {
                         kafkaSource,
                         WatermarkStrategy.noWatermarks(),
                         "iot data source"
-                ).map(value -> {
+                ).flatMap((String value, Collector<PointData> out) -> {
                     try {
-                        PointData data = mapper.readValue(value, PointData.class);
-                        if (data == null) {
-                            log.warn("Parsed null PointData from: {}", value);
-                            return null;
+                        JsonNode root = mapper.readTree(value);
+                        String payloadStr = root.path("payload").asText();
+                        if (payloadStr == null || payloadStr.isEmpty()) {
+                            // 兼容直接是 PointData 的格式
+                            PointData data = mapper.readValue(value, PointData.class);
+                            if (data != null && data.getTimestamp() != null) out.collect(data);
+                            return;
                         }
-                        if (data.getCompany_id() == null || data.getDevice_id() == null || data.getTimestamp() == null) {
-                            log.warn("PointData missing critical fields: {}", data);
-                            return null;
+
+                        JsonNode payload = mapper.readTree(payloadStr);
+                        String meter = payload.path("meter").asText();
+                        JsonNode datas = payload.path("datas");
+                        
+                        // 从 topic 中提取 companyId 和 projectId
+                        // topic 格式: /data/asiainfo/xs2/udp/396/161
+                        String topic = root.path("topic").asText("");
+                        String[] parts = topic.split("/");
+                        String companyId = parts.length >= 6 ? parts[5] : "unknown";
+                        String projectId = parts.length >= 7 ? parts[6] : "unknown";
+                        String gatewayCode = parts.length >= 5 ? parts[4] : "unknown";
+
+                        if (datas.isArray()) {
+                            for (JsonNode node : datas) {
+                                PointData p = new PointData();
+                                p.setCompany_id(companyId);
+                                p.setProject_id(projectId);
+                                p.setDevice_id(meter);
+                                p.setGateway_code(gatewayCode);
+                                p.setData_type("source"); // 输入数据认为是 source
+                                p.setProperty_name(node.path("nm").asText());
+                                p.setProperty_num_value(node.path("v").asDouble());
+                                p.setTimestamp(node.path("ts").asLong() * 1000); // 假设 ts 是秒级
+                                out.collect(p);
+                            }
                         }
-                        return data;
                     } catch (Exception e) {
                         log.error("Failed to parse Kafka message: {}, error: {}", value, e.getMessage());
-                        return null;
                     }
-                }).filter(Objects::nonNull).
+                }, TypeInformation.of(PointData.class)).filter(Objects::nonNull).
                 assignTimestampsAndWatermarks(
                         WatermarkStrategy
                                 .<PointData>forBoundedOutOfOrderness(Duration.ofSeconds(30))
@@ -155,7 +183,7 @@ public class IotCalcJob {
         // ========================
         // 5️⃣ 计算
         // ========================
-        DataStream<PointData> resultStream = windowedStream
+        DataStream<List<PointData>> resultStream = windowedStream
                 .keyBy(new KeySelector<Collection<PointData>, Tuple2<String, String>>() {
                     @Override
                     public Tuple2<String, String> getKey(Collection<PointData> coll) {
@@ -175,7 +203,7 @@ public class IotCalcJob {
         // ========================
         // 5️⃣ Kafka Sink
         // ========================
-        DataStream<String> resultJsonStream = resultStream.map(new RichMapFunction<>() {
+        DataStream<String> resultJsonStream = resultStream.map(new RichMapFunction<List<PointData>, String>() {
             private transient ObjectMapper jsonMapper;
 
             @Override
@@ -184,8 +212,38 @@ public class IotCalcJob {
             }
 
             @Override
-            public String map(PointData pointData) throws Exception {
-                return jsonMapper.writeValueAsString(pointData);
+            public String map(List<PointData> points) throws Exception {
+                if (points == null || points.isEmpty()) return null;
+                
+                PointData first = points.get(0);
+                
+                // 1. 构建内部 payload 结构
+                Map<String, Object> innerPayload = new HashMap<>();
+                List<Map<String, Object>> datas = new ArrayList<>();
+                
+                for (PointData p : points) {
+                    Map<String, Object> dataPoint = new HashMap<>();
+                    dataPoint.put("nm", p.getProperty_name());
+                    dataPoint.put("v", p.getProperty_num_value());
+                    dataPoint.put("ts", p.getTimestamp() != null ? p.getTimestamp() / 1000 : 0);
+                    datas.add(dataPoint);
+                }
+                
+                innerPayload.put("datas", datas);
+                innerPayload.put("meter", first.getDevice_id());
+                innerPayload.put("mid", "CALC-" + System.currentTimeMillis());
+                
+                // 2. 构建外部包装结构
+                Map<String, Object> wrap = new HashMap<>();
+                wrap.put("parseType", "calc");
+                wrap.put("payload", jsonMapper.writeValueAsString(innerPayload));
+                
+                String companyId = first.getCompany_id() != null ? first.getCompany_id() : "unknown";
+                String projectId = first.getProject_id() != null ? first.getProject_id() : "unknown";
+                String topic = String.format("/data/asiainfo/calc/tcp/%s/%s", companyId, projectId);
+                wrap.put("topic", topic);
+                
+                return jsonMapper.writeValueAsString(wrap);
             }
         });
 
@@ -210,7 +268,7 @@ public class IotCalcJob {
         resultJsonStream.sinkTo(kafkaSink);
 
         // 调试输出（生产可注释）
-        resultStream.print("Calc Result");
+        resultStream.print();
 
         log.info("启动 IoT Flink 衍生计算作业 (CDC Enabled, Flink 1.19), 输出 topic: {}", outputTopic);
         env.execute("IoT Calc Job");

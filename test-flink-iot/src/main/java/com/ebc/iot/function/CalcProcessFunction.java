@@ -21,7 +21,7 @@ import org.apache.flink.util.Collector;
 import java.util.*;
 
 @Slf4j
-public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<String, String>, Collection<PointData>, String, PointData> {
+public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<String, String>, Collection<PointData>, String, List<PointData>> {
 
     public static final MapStateDescriptor<Tuple2<String, String>, Map<String, DevicePointRule>> RULES_STATE_DESC =
             new MapStateDescriptor<>(
@@ -45,7 +45,7 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
     }
 
     @Override
-    public void processBroadcastElement(String value, Context ctx, Collector<PointData> out) throws Exception {
+    public void processBroadcastElement(String value, Context ctx, Collector<List<PointData>> out) throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
         JsonNode root = objectMapper.readTree(value);
         String op = root.path("op").asText();
@@ -80,7 +80,7 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
     }
 
     @Override
-    public void processElement(Collection<PointData> values, ReadOnlyContext ctx, Collector<PointData> out) throws Exception {
+    public void processElement(Collection<PointData> values, ReadOnlyContext ctx, Collector<List<PointData>> out) throws Exception {
         if (values == null || values.isEmpty()) return;
 
         // 获取最大的时间戳作为本次计算的时间戳
@@ -104,6 +104,8 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
             PointData firstData = values.iterator().next();
             String projectId = firstData.getProject_id();
             String gatewayCode = firstData.getGateway_code();
+
+            List<PointData> results = new ArrayList<>();
 
             for (DevicePointRule rule : rulesMap.values()) {
                 try {
@@ -129,7 +131,7 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
                                 p.setCreate_date(System.currentTimeMillis());
                                 p.setData_date(maxTs);
                                 p.setTimestamp(maxTs);
-                                out.collect(p);
+                                results.add(p);
                                 
                                 // 同时将计算出的衍生点位存回状态，以支持链式计算
                                 try {
@@ -141,6 +143,10 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
                 } catch (Exception e) {
                     log.error("Rule eval failed for {}: {}", rule.getPointCode(), e.getMessage());
                 }
+            }
+
+            if (!results.isEmpty()) {
+                out.collect(results);
             }
         }
     }
