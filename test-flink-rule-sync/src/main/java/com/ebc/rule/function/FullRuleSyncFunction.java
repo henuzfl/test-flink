@@ -5,6 +5,7 @@ import com.ebc.common.model.BaseModelInfo;
 import com.ebc.common.model.BusObjectInfo;
 import com.ebc.common.model.BusObjectPointData;
 import com.ebc.common.model.DevicePointRule;
+import com.ebc.rule.config.RuleSyncConfig;
 import com.ebc.common.utils.LakPointFormulaUtils;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -36,6 +37,17 @@ public class FullRuleSyncFunction extends BroadcastProcessFunction<String, BusLa
     public static final MapStateDescriptor<Integer, BaseModelInfo> MODELS_STATE =
             new MapStateDescriptor<>("models-state", BasicTypeInfo.INT_TYPE_INFO, TypeInformation.of(BaseModelInfo.class));
 
+    private final RuleSyncConfig config;
+
+    public FullRuleSyncFunction(RuleSyncConfig config) {
+        this.config = config;
+    }
+
+    @Override
+    public void open(org.apache.flink.configuration.Configuration parameters) throws Exception {
+        // Config is passed via constructor, no need to load from global parameters
+    }
+
     @Override
     public void processBroadcastElement(BusLakConfigEvent event, Context ctx, Collector<DevicePointRule> out) throws Exception {
         handleLakConfigChange(event, ctx, out);
@@ -46,7 +58,9 @@ public class FullRuleSyncFunction extends BroadcastProcessFunction<String, BusLa
         String op = event.getOp();
         String table = event.getTable();
 
-        if ("bus_object_point_data_test".equals(table)) {
+        RuleSyncConfig.MysqlConfig src = config.getSourceMysql();
+
+        if (src.getTablePoint().equals(table)) {
             // --- 点位变更 ---
             BusObjectPointData p = MAPPER.convertValue(data, BusObjectPointData.class);
             BroadcastState<Integer, BusObjectPointData> state = ctx.getBroadcastState(POINTS_STATE);
@@ -61,13 +75,13 @@ public class FullRuleSyncFunction extends BroadcastProcessFunction<String, BusLa
                     emitPointRule(p, info, info.getStatus(), out);
                 }
             }
-        } else if ("bus_object_info".equals(table)) {
+        } else if (src.getTableObject().equals(table)) {
             // --- 设备信息同步 ---
             BusObjectInfo info = MAPPER.convertValue(data, BusObjectInfo.class);
             BroadcastState<Integer, BusObjectInfo> state = ctx.getBroadcastState(OBJECTS_STATE);
             if ("d".equals(op)) state.remove(info.getObjectId());
             else state.put(info.getObjectId(), info);
-        } else if ("base_model_info".equals(table)) {
+        } else if (src.getTableModel().equals(table)) {
             // --- 模型信息同步 ---
             BaseModelInfo model = MAPPER.convertValue(data, BaseModelInfo.class);
             BroadcastState<Integer, BaseModelInfo> state = ctx.getBroadcastState(MODELS_STATE);
