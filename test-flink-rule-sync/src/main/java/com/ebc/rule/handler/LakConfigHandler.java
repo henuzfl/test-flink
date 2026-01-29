@@ -1,60 +1,57 @@
-package com.ebc.rule.function;
+package com.ebc.rule.handler;
 
 import com.ebc.common.event.BusLakConfigEvent;
 import com.ebc.common.model.BaseModelInfo;
 import com.ebc.common.model.BusObjectInfo;
 import com.ebc.common.model.BusObjectPointData;
 import com.ebc.common.model.DevicePointRule;
-import com.ebc.rule.config.RuleSyncConfig;
+import com.ebc.common.model.FormulaResult;
+import com.ebc.common.utils.JsonMapperUtils;
 import com.ebc.common.utils.LakPointFormulaUtils;
-import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.ebc.rule.config.RuleSyncConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategy;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.api.common.state.BroadcastState;
-import org.apache.flink.api.common.state.MapStateDescriptor;
-import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.streaming.api.functions.co.BroadcastProcessFunction;
 import org.apache.flink.util.Collector;
 
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static com.ebc.rule.function.LakRuleSyncFunction.MODELS_STATE;
+import static com.ebc.rule.function.LakRuleSyncFunction.OBJECTS_STATE;
+import static com.ebc.rule.function.LakRuleSyncFunction.POINTS_STATE;
+
 /**
- * 核心逻辑：监听设备、模型、点位三表变化，在内存中 Join 并同步规则
+ * 专门处理 LAK 配置变更逻辑的处理器
  */
-public class FullRuleSyncFunction extends BroadcastProcessFunction<String, BusLakConfigEvent, DevicePointRule> {
+@Slf4j
+public class LakConfigHandler implements Serializable {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper()
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-            .setPropertyNamingStrategy(PropertyNamingStrategy.SNAKE_CASE);
-
-    // 状态描述符定义
-    public static final MapStateDescriptor<Integer, BusObjectPointData> POINTS_STATE =
-            new MapStateDescriptor<>("points-state", BasicTypeInfo.INT_TYPE_INFO, TypeInformation.of(BusObjectPointData.class));
-
-    public static final MapStateDescriptor<Integer, BusObjectInfo> OBJECTS_STATE =
-            new MapStateDescriptor<>("objects-state", BasicTypeInfo.INT_TYPE_INFO, TypeInformation.of(BusObjectInfo.class));
-
-    public static final MapStateDescriptor<Integer, BaseModelInfo> MODELS_STATE =
-            new MapStateDescriptor<>("models-state", BasicTypeInfo.INT_TYPE_INFO, TypeInformation.of(BaseModelInfo.class));
+    private static final long serialVersionUID = 1L;
+    private static final ObjectMapper MAPPER = JsonMapperUtils.getSnakeCaseMapper();
 
     private final RuleSyncConfig config;
 
-    public FullRuleSyncFunction(RuleSyncConfig config) {
+    private static final Pattern FUNC_PATTERN = Pattern.compile("^([a-zA-Z0-9_]+)\\s*\\((.*)\\)$");
+
+    private TransformerStrategyFactory strategyFactory;
+
+    public LakConfigHandler(RuleSyncConfig config) {
         this.config = config;
+        strategyFactory = new TransformerStrategyFactory();
+        strategyFactory.init();
     }
 
-    @Override
-    public void open(org.apache.flink.configuration.Configuration parameters) throws Exception {
-        // Config is passed via constructor, no need to load from global parameters
-    }
-
-    @Override
-    public void processBroadcastElement(BusLakConfigEvent event, Context ctx, Collector<DevicePointRule> out) throws Exception {
-        handleLakConfigChange(event, ctx, out);
-    }
-
-    private void handleLakConfigChange(BusLakConfigEvent event, Context ctx, Collector<DevicePointRule> out) throws Exception {
-        JsonNode data = event.getData();
+    /**
+     * 处理配置变更事件
+     */
+    public void handle(BusLakConfigEvent event, BroadcastProcessFunction<?, ?, ?>.Context ctx, Collector<DevicePointRule> out) throws Exception {
+        JsonNode data = MAPPER.readTree(event.getData());
         String op = event.getOp();
         String table = event.getTable();
 
@@ -98,24 +95,42 @@ public class FullRuleSyncFunction extends BroadcastProcessFunction<String, BusLa
     private void emitPointRule(BusObjectPointData p, BusObjectInfo info, int enabled, Collector<DevicePointRule> out) {
         if (p == null) return;
 
-        // 解析公式
-        LakPointFormulaUtils.FormulaResult fr = LakPointFormulaUtils.parse(p.getFormula(), p.getCompanyId());
+        // 1. 解析公式
+        FormulaResult fr = LakPointFormulaUtils.parse(p.getFormula(), p.getCompanyId());
+
+        if (fr.getExprType() == 1) {
+            Matcher matcher = FUNC_PATTERN.matcher(fr.getExpr());
+            if (matcher.matches()) {
+                String funcName = matcher.group(1);
+                String argsStr = matcher.group(2);
+                List<String> args = parseArguments(argsStr);
+
+                fr = strategyFactory.getStrategy(funcName).transform(p.getCompanyId(), info.getObjectCode(), funcName, args, fr.getDependsOn());
+            }
+        }
+
+        // 3. 将结构化依赖转为 JSON 字符串入库
+        String dependsOnStr = "[]";
+        try {
+            dependsOnStr = MAPPER.writeValueAsString(fr.getDependsOn());
+        } catch (Exception e) {
+            log.error("Failed to serialize dependsOn", e);
+        }
 
         DevicePointRule rule = DevicePointRule.builder()
                 .companyId(String.valueOf(p.getCompanyId()))
-                .deviceCode(info != null ? info.getObjectCode() : "unknown") // 删除时 info 可能为 null，但 p 里有基本信息
+                .deviceCode(info != null ? info.getObjectCode() : "unknown")
                 .pointCode(p.getDataCode())
                 .pointType(2)
                 .valueType(parseDataType(p.getDataType()))
                 .exprType(fr.getExprType())
                 .expr(fr.getExpr())
-                .dependsOn(fr.getDependsOn())
+                .dependsOn(dependsOnStr)
                 .enabled(enabled)
                 .build();
 
         out.collect(rule);
     }
-
 
     private int parseDataType(String dt) {
         try {
@@ -125,8 +140,17 @@ public class FullRuleSyncFunction extends BroadcastProcessFunction<String, BusLa
         }
     }
 
-    @Override
-    public void processElement(String value, ReadOnlyContext ctx, Collector<DevicePointRule> out) {
-
+    private List<String> parseArguments(String argsStr) {
+        List<String> args = new ArrayList<>();
+        if (argsStr == null || argsStr.trim().isEmpty()) {
+            return args;
+        }
+        // 简单按逗号分割（暂不考虑嵌套括号或引号内逗号的极端情况）
+        String[] split = argsStr.split(",");
+        for (String s : split) {
+            // 移除首尾空格及引号
+            args.add(s.trim().replaceAll("^['\"]|['\"]$", ""));
+        }
+        return args;
     }
 }

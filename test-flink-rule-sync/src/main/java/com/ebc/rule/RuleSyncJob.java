@@ -4,11 +4,10 @@ import com.ebc.common.config.ConfigLoader;
 import com.ebc.common.event.BusLakConfigEvent;
 import com.ebc.common.model.DevicePointRule;
 import com.ebc.rule.config.RuleSyncConfig;
-import com.ebc.rule.function.FullRuleSyncFunction;
-import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.ebc.rule.function.LakRuleSyncFunction;
+import com.ebc.common.utils.JsonMapperUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategy;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.utils.ParameterTool;
@@ -21,7 +20,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.Collector;
 
-import static com.ebc.rule.function.FullRuleSyncFunction.*;
+import static com.ebc.rule.function.LakRuleSyncFunction.*;
 
 /**
  * 规则多表同步 Job (DataStream 模式)
@@ -29,9 +28,7 @@ import static com.ebc.rule.function.FullRuleSyncFunction.*;
  */
 public class RuleSyncJob {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper()
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-            .setPropertyNamingStrategy(PropertyNamingStrategy.SNAKE_CASE);
+    private static final ObjectMapper MAPPER = JsonMapperUtils.getSnakeCaseMapper();
 
     public static void main(String[] args) throws Exception {
         ParameterTool params = ConfigLoader.loadConfig(args, "application.yml");
@@ -64,11 +61,11 @@ public class RuleSyncJob {
                 if (data != null && !data.isNull()) {
                     if (src.getTablePoint().equals(table)) {
                         if (data.path("data_source").asInt() == 2) {
-                            out.collect(new BusLakConfigEvent(table, op, data));
+                            out.collect(new BusLakConfigEvent(table, op, data.toString()));
                         }
                     } else {
                         // 2. 其他表 (info, model) 全量同步
-                        out.collect(new BusLakConfigEvent(table, op, data));
+                        out.collect(new BusLakConfigEvent(table, op, data.toString()));
                     }
                 }
             } catch (Exception e) {
@@ -79,7 +76,7 @@ public class RuleSyncJob {
         // 2. 连接广播流并进行处理
         DataStream<DevicePointRule> syncStream = env.fromElements("")
                 .connect(combinedStream.broadcast(POINTS_STATE, OBJECTS_STATE, MODELS_STATE))
-                .process(new FullRuleSyncFunction(config));
+                .process(new LakRuleSyncFunction(config));
 
         // 3. 写入目标数据库
         configureSink(syncStream, config);
