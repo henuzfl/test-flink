@@ -66,8 +66,10 @@ public class FullRuleSyncFunction extends BroadcastProcessFunction<String, BusLa
             BroadcastState<Integer, BusObjectPointData> state = ctx.getBroadcastState(POINTS_STATE);
 
             if ("d".equals(op)) {
+                // 删除时，尝试从状态中先拿到设备信息以便能正确定位目标记录
+                BusObjectInfo info = ctx.getBroadcastState(OBJECTS_STATE).get(p.getObjectId());
                 state.remove(p.getDataId());
-                emitPointRule(p, null, 0, out);
+                emitPointRule(p, info, 0, out);
             } else {
                 state.put(p.getDataId(), p);
                 BusObjectInfo info = ctx.getBroadcastState(OBJECTS_STATE).get(p.getObjectId());

@@ -49,34 +49,47 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
         ObjectMapper objectMapper = new ObjectMapper();
         JsonNode root = objectMapper.readTree(value);
         String op = root.path("op").asText();
-        JsonNode dataNode = root.path("after");
-        if (dataNode.isMissingNode() || dataNode.isNull()) return;
+
+        // CDC 逻辑：如果是删除 'd'，则取 'before'，否则取 'after'
+        JsonNode dataNode = "d".equals(op) ? root.path("before") : root.path("after");
+
+        if (dataNode.isMissingNode() || dataNode.isNull()) {
+            return;
+        }
+
         int pointType = dataNode.path("point_type").asInt();
         if (pointType != 2) {
             return;
         }
+
         String deviceCode = dataNode.path("device_code").asText();
         String ptCode = dataNode.path("point_code").asText();
         int companyId = dataNode.path("company_id").asInt();
-        int enabled = dataNode.path("enabled").asInt(1);
+        // 如果 enabled 字段缺失，默认设为 1 (启用)
+        int enabled = dataNode.has("enabled") ? dataNode.path("enabled").asInt() : 1;
 
         Tuple2<String, String> ruleKey = new Tuple2<>(String.valueOf(companyId), deviceCode);
         BroadcastState<Tuple2<String, String>, Map<String, DevicePointRule>> ruleState = ctx.getBroadcastState(RULES_STATE_DESC);
         Map<String, DevicePointRule> deviceRules = ruleState.get(ruleKey);
-        if (deviceRules == null) deviceRules = new HashMap<>();
+        if (deviceRules == null) {
+            deviceRules = new HashMap<>();
+        }
 
-        if (enabled == 0 || "d".equals(op)) {
+        if ("d".equals(op) || enabled == 0) {
             deviceRules.remove(ptCode);
-            log.info("Rule removed via CDC: company={}, device={}, point={}", companyId, deviceCode, ptCode);
+            log.info("Rule removed via CDC: op={}, company={}, device={}, point={}", op, companyId, deviceCode, ptCode);
         } else {
             DevicePointRule rule = DevicePointRule.fromJsonNode(dataNode);
             deviceRules.put(ptCode, rule);
-            log.info("Rule updated via CDC: company={}, device={}, point={}, exprType={}",
-                    companyId, deviceCode, ptCode, rule.getExprType());
+            log.info("Rule updated via CDC: op={}, company={}, device={}, point={}, exprType={}",
+                    op, companyId, deviceCode, ptCode, rule.getExprType());
         }
 
-        if (deviceRules.isEmpty()) ruleState.remove(ruleKey);
-        else ruleState.put(ruleKey, deviceRules);
+        if (deviceRules.isEmpty()) {
+            ruleState.remove(ruleKey);
+        } else {
+            ruleState.put(ruleKey, deviceRules);
+        }
     }
 
     @Override
