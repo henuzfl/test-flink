@@ -38,7 +38,7 @@ public class CalcSumTransformer implements TransformerStrategy {
         }
         // 2. 筛选出下级所有的为 targetModelId 的设备
         List<FormulaDependency> subDependencies = new ArrayList<>();
-        int count = 1;
+        int index = 0;
         for (Map.Entry<Integer, BusObjectInfo> entry : ctx.getBroadcastState(OBJECTS_STATE).immutableEntries()) {
             BusObjectInfo subInfo = entry.getValue();
             if (subInfo.getParentId() != null && subInfo.getParentId().equals(deviceInfo.getObjectId())
@@ -48,7 +48,7 @@ public class CalcSumTransformer implements TransformerStrategy {
                         .companyId(deviceInfo.getCompanyId())
                         .deviceCode(subInfo.getObjectCode())
                         .pointCode(targetPointCode)
-                        .var("#" + count++)
+                        .var(getVarName(index++))
                         .build());
             }
         }
@@ -59,14 +59,26 @@ public class CalcSumTransformer implements TransformerStrategy {
             result.setExpr("0");
         } else {
             StringBuilder expr = new StringBuilder();
-            for (int i = 1; i < count; i++) {
-                if (i > 1) expr.append(" + ");
-                expr.append("#").append(i);
+            for (int i = 0; i < index; i++) {
+                if (i > 0) expr.append(" + ");
+                expr.append(getVarName(i));
             }
             result.setExpr(expr.toString());
         }
         result.setDependsOn(subDependencies);
-        result.setExprType(0);
+        result.setExprType(0); // 0 表示算术表达式模式 (a + b)
         return result;
+    }
+
+    /**
+     * 将索引转为变量名 (0->a, 1->b, ..., 25->z, 26->aa...)
+     */
+    private String getVarName(int index) {
+        StringBuilder sb = new StringBuilder();
+        while (index >= 0) {
+            sb.insert(0, (char) ('a' + (index % 26)));
+            index = (index / 26) - 1;
+        }
+        return sb.toString();
     }
 }
