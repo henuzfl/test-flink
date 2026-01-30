@@ -13,6 +13,8 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.streaming.api.functions.co.BroadcastProcessFunction;
 import org.apache.flink.util.Collector;
 
+import java.util.Set;
+
 /**
  * 核心逻辑：监听设备、模型、点位三表变化，在内存中 Join 并同步规则
  * 逻辑已委托给 LakConfigHandler 处理
@@ -28,6 +30,10 @@ public class LakRuleSyncFunction extends BroadcastProcessFunction<String, BusLak
 
     public static final MapStateDescriptor<Integer, BaseModelInfo> MODELS_STATE =
             new MapStateDescriptor<>("models-state", BasicTypeInfo.INT_TYPE_INFO, TypeInformation.of(BaseModelInfo.class));
+
+    // 动态订阅状态：Key=parentId:modelCode, Value=Set<pointDataId>
+    public static final MapStateDescriptor<String, Set<Integer>> DYNAMIC_WATCH_STATE =
+            new MapStateDescriptor<>("dynamic-watch-state", BasicTypeInfo.STRING_TYPE_INFO, TypeInformation.of(new org.apache.flink.api.common.typeinfo.TypeHint<Set<Integer>>() {}));
 
     private final LakConfigHandler handler;
 

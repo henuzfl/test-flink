@@ -72,7 +72,7 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
         // 1. 清理旧依赖的索引
         if (oldRule != null) {
             for (DevicePointRule.Dependency dep : oldRule.getDependencyList()) {
-                Tuple3<String, String, String> key = new Tuple3<>(oldRule.getCompanyId(), oldRule.getDeviceCode(), dep.getPoint_code());
+                Tuple3<String, String, String> key = new Tuple3<>(oldRule.getCompanyId(), dep.getDevice_code(), dep.getPoint_code());
                 Map<String, DevicePointRule> map = ruleState.get(key);
                 if (map != null) {
                     map.remove(oldRule.getPointCode());

@@ -75,7 +75,7 @@ public class RuleSyncJob {
 
         // 2. 连接广播流并进行处理
         DataStream<DevicePointRule> syncStream = env.fromElements("")
-                .connect(combinedStream.broadcast(POINTS_STATE, OBJECTS_STATE, MODELS_STATE))
+                .connect(combinedStream.broadcast(POINTS_STATE, OBJECTS_STATE, MODELS_STATE, DYNAMIC_WATCH_STATE))
                 .process(new LakRuleSyncFunction(config));
 
         // 3. 写入目标数据库

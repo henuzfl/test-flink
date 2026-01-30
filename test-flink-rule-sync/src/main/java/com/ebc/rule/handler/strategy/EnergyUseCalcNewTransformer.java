@@ -11,7 +11,7 @@ public class EnergyUseCalcNewTransformer implements TransformerStrategy {
     private static final long serialVersionUID = 1L;
 
     @Override
-    public FormulaResult transform(BroadcastProcessFunction<?, ?, ?>.Context ctx, BusObjectInfo deviceInfo, String funcName, List<String> args, List<FormulaDependency> dependencies) {
+    public FormulaResult transform(BroadcastProcessFunction<?, ?, ?>.Context ctx, BusObjectInfo deviceInfo, Integer pointDataId, String funcName, List<String> args, List<FormulaDependency> dependencies) {
         String deviceCode = deviceInfo != null ? deviceInfo.getObjectCode() : "unknown";
         FormulaResult result = new FormulaResult();
         String type = args.get(1).toLowerCase();
@@ -37,7 +37,7 @@ public class EnergyUseCalcNewTransformer implements TransformerStrategy {
                 .companyId(deviceInfo.getCompanyId())
                 .deviceCode(deviceCode)
                 .pointCode(arg0)
-                .var("#1")
+                .var("a")
                 .build();
         result.setDependsOn(List.of(dependency));
         result.setExprType(1);

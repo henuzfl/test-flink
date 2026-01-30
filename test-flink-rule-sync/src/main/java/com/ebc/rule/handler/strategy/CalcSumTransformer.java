@@ -6,10 +6,9 @@ import com.ebc.common.model.FormulaDependency;
 import com.ebc.common.model.FormulaResult;
 import org.apache.flink.streaming.api.functions.co.BroadcastProcessFunction;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
+import static com.ebc.rule.function.LakRuleSyncFunction.DYNAMIC_WATCH_STATE;
 import static com.ebc.rule.function.LakRuleSyncFunction.MODELS_STATE;
 import static com.ebc.rule.function.LakRuleSyncFunction.OBJECTS_STATE;
 
@@ -17,7 +16,7 @@ public class CalcSumTransformer implements TransformerStrategy {
     private static final long serialVersionUID = 1L;
 
     @Override
-    public FormulaResult transform(BroadcastProcessFunction<?, ?, ?>.Context ctx, BusObjectInfo deviceInfo, String funcName, List<String> args, List<FormulaDependency> dependencies) throws Exception {
+    public FormulaResult transform(BroadcastProcessFunction<?, ?, ?>.Context ctx, BusObjectInfo deviceInfo, Integer pointDataId, String funcName, List<String> args, List<FormulaDependency> dependencies) throws Exception {
         if (deviceInfo == null || args == null || args.size() < 2) {
             return new FormulaResult();
         }
@@ -36,6 +35,15 @@ public class CalcSumTransformer implements TransformerStrategy {
         if (targetModelId == null) {
             return new FormulaResult();
         }
+
+        // --- 注册动态订阅 ---
+        String watchKey = deviceInfo.getObjectId() + ":" + targetModelCode;
+        Set<Integer> watchers = ctx.getBroadcastState(DYNAMIC_WATCH_STATE).get(watchKey);
+        if (watchers == null) {
+            watchers = new HashSet<>();
+        }
+        watchers.add(pointDataId);
+        ctx.getBroadcastState(DYNAMIC_WATCH_STATE).put(watchKey, watchers);
         // 2. 筛选出下级所有的为 targetModelId 的设备
         List<FormulaDependency> subDependencies = new ArrayList<>();
         int index = 0;

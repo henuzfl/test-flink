@@ -18,10 +18,14 @@ import org.apache.flink.util.Collector;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static com.ebc.rule.function.LakRuleSyncFunction.DYNAMIC_WATCH_STATE;
 import static com.ebc.rule.function.LakRuleSyncFunction.MODELS_STATE;
 import static com.ebc.rule.function.LakRuleSyncFunction.OBJECTS_STATE;
 import static com.ebc.rule.function.LakRuleSyncFunction.POINTS_STATE;
@@ -78,8 +82,15 @@ public class LakConfigHandler implements Serializable {
             // --- 设备信息同步 ---
             BusObjectInfo info = MAPPER.convertValue(data, BusObjectInfo.class);
             BroadcastState<Integer, BusObjectInfo> state = ctx.getBroadcastState(OBJECTS_STATE);
+            
+            // 拿到变更前的父节点和模型信息（用于触发更新）
+            BusObjectInfo oldInfo = state.get(info.getObjectId());
+            
             if ("d".equals(op)) state.remove(info.getObjectId());
             else state.put(info.getObjectId(), info);
+
+            // 触发受影响的聚合规则更新
+            triggerAffectedRules(oldInfo, info, ctx, out);
         } else if (src.getTableModel().equals(table)) {
             // --- 模型信息同步 ---
             BaseModelInfo model = MAPPER.convertValue(data, BaseModelInfo.class);
@@ -105,7 +116,7 @@ public class LakConfigHandler implements Serializable {
                 String argsStr = matcher.group(2);
                 List<String> args = parseArguments(argsStr);
 
-                fr = strategyFactory.getStrategy(funcName).transform(ctx, info, funcName, args, fr.getDependsOn());
+                fr = strategyFactory.getStrategy(funcName).transform(ctx, info, p.getDataId(), funcName, args, fr.getDependsOn());
             }
         }
 
@@ -130,6 +141,38 @@ public class LakConfigHandler implements Serializable {
                 .build();
 
         out.collect(rule);
+    }
+
+    private void triggerAffectedRules(BusObjectInfo oldInfo, BusObjectInfo newInfo, BroadcastProcessFunction<?, ?, ?>.Context ctx, Collector<DevicePointRule> out) throws Exception {
+        Set<String> affectedKeys = new HashSet<>();
+        // 如果是删或者是改
+        if (oldInfo != null && oldInfo.getParentId() != null) {
+            BaseModelInfo model = ctx.getBroadcastState(MODELS_STATE).get(oldInfo.getModelId());
+            if (model != null) affectedKeys.add(oldInfo.getParentId() + ":" + model.getObjectCode());
+        }
+        // 如果是增或者是改
+        if (newInfo != null && newInfo.getParentId() != null) {
+            BaseModelInfo model = ctx.getBroadcastState(MODELS_STATE).get(newInfo.getModelId());
+            if (model != null) affectedKeys.add(newInfo.getParentId() + ":" + model.getObjectCode());
+        }
+
+        if (affectedKeys.isEmpty()) return;
+
+        for (String key : affectedKeys) {
+            Set<Integer> pointIds = ctx.getBroadcastState(DYNAMIC_WATCH_STATE).get(key);
+            if (pointIds != null) {
+                for (Integer pointId : pointIds) {
+                    BusObjectPointData point = ctx.getBroadcastState(POINTS_STATE).get(pointId);
+                    if (point != null) {
+                        BusObjectInfo parentInfo = ctx.getBroadcastState(OBJECTS_STATE).get(point.getObjectId());
+                        if (parentInfo != null) {
+                            log.info("Topology changed, re-emitting rule for point: {}, parent: {}", point.getDataCode(), parentInfo.getObjectCode());
+                            emitPointRule(point, parentInfo, parentInfo.getStatus(), ctx, out);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private int parseDataType(String dt) {
