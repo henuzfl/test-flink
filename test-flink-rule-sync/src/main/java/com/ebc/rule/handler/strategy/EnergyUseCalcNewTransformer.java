@@ -1,7 +1,9 @@
 package com.ebc.rule.handler.strategy;
 
+import com.ebc.common.model.BusObjectInfo;
 import com.ebc.common.model.FormulaDependency;
 import com.ebc.common.model.FormulaResult;
+import org.apache.flink.streaming.api.functions.co.BroadcastProcessFunction;
 
 import java.util.List;
 
@@ -9,7 +11,8 @@ public class EnergyUseCalcNewTransformer implements TransformerStrategy {
     private static final long serialVersionUID = 1L;
 
     @Override
-    public FormulaResult transform(int companyId, String deviceCode, String funcName, List<String> args, List<FormulaDependency> dependencies) {
+    public FormulaResult transform(BroadcastProcessFunction<?, ?, ?>.Context ctx, BusObjectInfo deviceInfo, String funcName, List<String> args, List<FormulaDependency> dependencies) {
+        String deviceCode = deviceInfo != null ? deviceInfo.getObjectCode() : "unknown";
         FormulaResult result = new FormulaResult();
         String type = args.get(1).toLowerCase();
         switch (type) {
@@ -31,7 +34,7 @@ public class EnergyUseCalcNewTransformer implements TransformerStrategy {
         }
         String arg0 = args.get(0);
         FormulaDependency dependency = FormulaDependency.builder()
-                .companyId(companyId)
+                .companyId(deviceInfo.getCompanyId())
                 .deviceCode(deviceCode)
                 .pointCode(arg0)
                 .var("#1")

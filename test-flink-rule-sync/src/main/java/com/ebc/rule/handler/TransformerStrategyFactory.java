@@ -1,5 +1,6 @@
 package com.ebc.rule.handler;
 
+import com.ebc.rule.handler.strategy.CalcSumTransformer;
 import com.ebc.rule.handler.strategy.EnergyUseCalcNewTransformer;
 import com.ebc.rule.handler.strategy.TransformerStrategy;
 
@@ -14,6 +15,7 @@ public class TransformerStrategyFactory implements Serializable {
 
     public void init() {
         strategies.put("energyUseCalcNew", new EnergyUseCalcNewTransformer());
+        strategies.put("calcSum", new CalcSumTransformer());
     }
 
     public TransformerStrategy getStrategy(String transformerType) {

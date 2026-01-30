@@ -66,12 +66,12 @@ public class LakConfigHandler implements Serializable {
                 // 删除时，尝试从状态中先拿到设备信息以便能正确定位目标记录
                 BusObjectInfo info = ctx.getBroadcastState(OBJECTS_STATE).get(p.getObjectId());
                 state.remove(p.getDataId());
-                emitPointRule(p, info, 0, out);
+                emitPointRule(p, info, 0, ctx, out);
             } else {
                 state.put(p.getDataId(), p);
                 BusObjectInfo info = ctx.getBroadcastState(OBJECTS_STATE).get(p.getObjectId());
                 if (info != null) {
-                    emitPointRule(p, info, info.getStatus(), out);
+                    emitPointRule(p, info, info.getStatus(), ctx, out);
                 }
             }
         } else if (src.getTableObject().equals(table)) {
@@ -92,7 +92,7 @@ public class LakConfigHandler implements Serializable {
     /**
      * 核心规则构建与下发
      */
-    private void emitPointRule(BusObjectPointData p, BusObjectInfo info, int enabled, Collector<DevicePointRule> out) {
+    private void emitPointRule(BusObjectPointData p, BusObjectInfo info, int enabled, BroadcastProcessFunction<?, ?, ?>.Context ctx, Collector<DevicePointRule> out) throws Exception {
         if (p == null) return;
 
         // 1. 解析公式
@@ -105,7 +105,7 @@ public class LakConfigHandler implements Serializable {
                 String argsStr = matcher.group(2);
                 List<String> args = parseArguments(argsStr);
 
-                fr = strategyFactory.getStrategy(funcName).transform(p.getCompanyId(), info.getObjectCode(), funcName, args, fr.getDependsOn());
+                fr = strategyFactory.getStrategy(funcName).transform(ctx, info, funcName, args, fr.getDependsOn());
             }
         }
 
