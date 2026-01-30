@@ -1,11 +1,11 @@
 package com.ebc.iot.function;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ebc.iot.function.strategy.CalculationContext;
 import com.ebc.common.model.DevicePointRule;
 import com.ebc.common.model.PointData;
 import com.ebc.iot.function.strategy.CalcFuncStrategy;
+import com.ebc.iot.function.strategy.CalculationContext;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.api.common.state.BroadcastState;
 import org.apache.flink.api.common.state.MapState;
@@ -38,7 +38,7 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
     private transient CalcFuncStrategyFactory strategyFactory;
 
     @Override
-    public void open(Configuration parameters) throws Exception {
+    public void open(Configuration parameters) {
         pointValueState = getRuntimeContext()
                 .getMapState(
                         new MapStateDescriptor<>("point-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO));

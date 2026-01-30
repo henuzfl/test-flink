@@ -181,7 +181,7 @@ public class IotCalcJob {
                         return new Tuple2<>(p.getCompany_id(), p.getDevice_id());
                     }
                 })
-                .window(SlidingEventTimeWindows.of(Time.minutes(15), Time.minutes(1)))
+                .window(SlidingEventTimeWindows.of(Duration.ofMinutes(15), Duration.ofMinutes(1)))
                 .aggregate(new LatestPointAgg());
 
         // ========================
@@ -208,7 +208,7 @@ public class IotCalcJob {
         // 5️⃣ Kafka Sink
         // ========================
         DataStream<String> resultJsonStream = resultStream.
-                map(new RichMapFunction<List<PointData>, String>() {
+                map(new RichMapFunction<>() {
                     private transient ObjectMapper jsonMapper;
 
                     @Override
