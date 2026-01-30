@@ -66,7 +66,7 @@ public class CalcSumTransformer implements TransformerStrategy {
             result.setExpr(expr.toString());
         }
         result.setDependsOn(subDependencies);
-        result.setExprType(1);
+        result.setExprType(0);
         return result;
     }
 }

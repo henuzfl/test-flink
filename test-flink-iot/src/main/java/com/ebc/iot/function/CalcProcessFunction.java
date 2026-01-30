@@ -14,6 +14,7 @@ import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeHint;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.functions.co.KeyedBroadcastProcessFunction;
 import org.apache.flink.util.Collector;
@@ -23,15 +24,15 @@ import java.util.*;
 @Slf4j
 public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<String, String>, Collection<PointData>, String, List<PointData>> {
 
-    public static final MapStateDescriptor<Tuple2<String, String>, Map<String, DevicePointRule>> RULES_STATE_DESC =
+    public static final MapStateDescriptor<Tuple3<String, String, String>, Map<String, DevicePointRule>> RULES_STATE_DESC =
             new MapStateDescriptor<>(
                     "rules-broadcast-state",
-                    TypeInformation.of(new TypeHint<Tuple2<String, String>>() {
+                    TypeInformation.of(new TypeHint<Tuple3<String, String, String>>() {
                     }),
                     TypeInformation.of(new TypeHint<Map<String, DevicePointRule>>() {
                     }));
 
-    private transient MapState<String, Double> pointValueState; // 存储各点位的最新值（来自于上游 15 分钟窗口聚合后的全量快照）
+    private transient MapState<String, Double> pointValueState; // 存储各点位的最新值
     private transient CalcFuncStrategyFactory strategyFactory;
 
     @Override
@@ -39,7 +40,6 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
         pointValueState = getRuntimeContext().getMapState(
                 new MapStateDescriptor<>("point-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO));
 
-        // 为每个算子子任务创建并初始化私有的策略工厂
         strategyFactory = new CalcFuncStrategyFactory();
         strategyFactory.init(getRuntimeContext());
     }
@@ -50,8 +50,8 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
         JsonNode root = objectMapper.readTree(value);
         String op = root.path("op").asText();
 
-        // CDC 逻辑：如果是删除 'd'，则取 'before'，否则取 'after'
         JsonNode dataNode = "d".equals(op) ? root.path("before") : root.path("after");
+        JsonNode beforeNode = root.path("before");
 
         if (dataNode.isMissingNode() || dataNode.isNull()) {
             return;
@@ -62,33 +62,43 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
             return;
         }
 
-        String deviceCode = dataNode.path("device_code").asText();
-        String ptCode = dataNode.path("point_code").asText();
-        int companyId = dataNode.path("company_id").asInt();
-        // 如果 enabled 字段缺失，默认设为 1 (启用)
-        int enabled = dataNode.has("enabled") ? dataNode.path("enabled").asInt() : 1;
+        // 解析当前规则
+        DevicePointRule newRule = ("d".equals(op)) ? null : DevicePointRule.fromJsonNode(dataNode);
+        // 解析旧规则（用于更新时清理旧依赖索引）
+        DevicePointRule oldRule = (beforeNode.isMissingNode() || beforeNode.isNull()) ? null : DevicePointRule.fromJsonNode(beforeNode);
 
-        Tuple2<String, String> ruleKey = new Tuple2<>(String.valueOf(companyId), deviceCode);
-        BroadcastState<Tuple2<String, String>, Map<String, DevicePointRule>> ruleState = ctx.getBroadcastState(RULES_STATE_DESC);
-        Map<String, DevicePointRule> deviceRules = ruleState.get(ruleKey);
-        if (deviceRules == null) {
-            deviceRules = new HashMap<>();
+        BroadcastState<Tuple3<String, String, String>, Map<String, DevicePointRule>> ruleState = ctx.getBroadcastState(RULES_STATE_DESC);
+
+        // 1. 清理旧依赖的索引
+        if (oldRule != null) {
+            for (DevicePointRule.Dependency dep : oldRule.getDependencyList()) {
+                Tuple3<String, String, String> key = new Tuple3<>(oldRule.getCompanyId(), oldRule.getDeviceCode(), dep.getPoint_code());
+                Map<String, DevicePointRule> map = ruleState.get(key);
+                if (map != null) {
+                    map.remove(oldRule.getPointCode());
+                    if (map.isEmpty()) {
+                        ruleState.remove(key);
+                    } else {
+                        ruleState.put(key, map);
+                    }
+                }
+            }
         }
 
-        if ("d".equals(op) || enabled == 0) {
-            deviceRules.remove(ptCode);
-            log.info("Rule removed via CDC: op={}, company={}, device={}, point={}", op, companyId, deviceCode, ptCode);
-        } else {
-            DevicePointRule rule = DevicePointRule.fromJsonNode(dataNode);
-            deviceRules.put(ptCode, rule);
-            log.info("Rule updated via CDC: op={}, company={}, device={}, point={}, exprType={}",
-                    op, companyId, deviceCode, ptCode, rule.getExprType());
-        }
-
-        if (deviceRules.isEmpty()) {
-            ruleState.remove(ruleKey);
-        } else {
-            ruleState.put(ruleKey, deviceRules);
+        // 2. 建立新依赖的索引
+        if (newRule != null && newRule.getEnabled() != 0 && !"d".equals(op)) {
+            for (DevicePointRule.Dependency dep : newRule.getDependencyList()) {
+                // 注意：这里使用的是依赖关系中的点位作为 Key 的一部分
+                Tuple3<String, String, String> key = new Tuple3<>(newRule.getCompanyId(), dep.getDevice_code(), dep.getPoint_code());
+                Map<String, DevicePointRule> map = ruleState.get(key);
+                if (map == null) {
+                    map = new HashMap<>();
+                }
+                map.put(newRule.getPointCode(), newRule);
+                ruleState.put(key, map);
+            }
+            log.info("Rule updated by dependencies: company={}, device={}, resultPoint={}, deps={}",
+                    newRule.getCompanyId(), newRule.getDeviceCode(), newRule.getPointCode(), newRule.getDependencyList().size());
         }
     }
 
@@ -96,31 +106,36 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
     public void processElement(Collection<PointData> values, ReadOnlyContext ctx, Collector<List<PointData>> out) throws Exception {
         if (values == null || values.isEmpty()) return;
 
-        // 获取最大的时间戳作为本次计算的时间戳
         long maxTs = values.stream()
                 .map(PointData::getTimestamp)
                 .filter(Objects::nonNull)
                 .mapToLong(Long::longValue)
                 .max().orElse(System.currentTimeMillis());
-        
-        // 1. 同时更新本次快照中所有点位的状态
+
+        // 1. 更新本次快照中所有点位的状态
         for (PointData value : values) {
             pointValueState.put(value.getProperty_name(), value.getProperty_num_value());
         }
 
-        // 2. 触发对应设备规则的计算（只触发一次！）
-        Tuple2<String, String> key = ctx.getCurrentKey();
-        Map<String, DevicePointRule> rulesMap = ctx.getBroadcastState(RULES_STATE_DESC).get(key);
+        // 2. 根据本次到达的点位，精准匹配受影响的规则
+        Map<String, DevicePointRule> triggeredRules = new HashMap<>();
+        for (PointData p : values) {
+            Tuple3<String, String, String> triggerKey = new Tuple3<>(p.getCompany_id(), p.getDevice_id(), p.getProperty_name());
+            Map<String, DevicePointRule> rules = ctx.getBroadcastState(RULES_STATE_DESC).get(triggerKey);
+            if (rules != null) {
+                triggeredRules.putAll(rules);
+            }
+        }
 
-        if (rulesMap != null) {
-            // 从输入数据中提取一些公共字段，如 project_id, gateway_code
+        if (!triggeredRules.isEmpty()) {
             PointData firstData = values.iterator().next();
             String projectId = firstData.getProject_id();
             String gatewayCode = firstData.getGateway_code();
+            Tuple2<String, String> currentKey = ctx.getCurrentKey();
 
             List<PointData> results = new ArrayList<>();
 
-            for (DevicePointRule rule : rulesMap.values()) {
+            for (DevicePointRule rule : triggeredRules.values()) {
                 try {
                     CalcFuncStrategy strategy = strategyFactory.getStrategy(rule);
                     if (strategy != null) {
@@ -132,24 +147,26 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
 
                             @Override
                             public void emit(String ptCode, Double calcValue) {
-                                PointData p = new PointData();
-                                p.setCompany_id(key.f0);
-                                p.setDevice_id(key.f1);
-                                p.setProject_id(projectId);
-                                p.setProperty_name(ptCode);
-                                p.setProperty_num_value(calcValue);
-                                p.setProperty_value(calcValue != null ? String.valueOf(calcValue) : null);
-                                p.setData_type("calc");
-                                p.setGateway_code(gatewayCode);
-                                p.setCreate_date(System.currentTimeMillis());
-                                p.setData_date(maxTs);
-                                p.setTimestamp(maxTs);
+                                PointData p = PointData.builder()
+                                        .company_id(rule.getCompanyId())
+                                        .device_id(rule.getDeviceCode())
+                                        .project_id(projectId)
+                                        .property_name(ptCode)
+                                        .property_num_value(calcValue)
+                                        .property_value(calcValue != null ? String.valueOf(calcValue) : null)
+                                        .data_type("calc")
+                                        .gateway_code(gatewayCode)
+                                        .create_date(System.currentTimeMillis())
+                                        .data_date(maxTs)
+                                        .timestamp(maxTs)
+                                        .build();
                                 results.add(p);
-                                
+
                                 // 同时将计算出的衍生点位存回状态，以支持链式计算
                                 try {
                                     pointValueState.put(ptCode, calcValue);
-                                } catch (Exception ignored) {}
+                                } catch (Exception ignored) {
+                                }
                             }
                         });
                     }
