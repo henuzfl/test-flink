@@ -18,6 +18,7 @@ import org.apache.flink.cdc.debezium.JsonDebeziumDeserializationSchema;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.util.Collector;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
@@ -78,25 +79,28 @@ public class IotCalcJob {
         /**
          * 2️⃣ 读取 Kafka 点位数据流，并解析为 PointData 对象
          */
-        DataStream<PointData> pointStream = env.fromSource(
+        DataStream<PointData> pointStream = env
+                .fromSource(
                         kafkaSource,
                         WatermarkStrategy.noWatermarks(),
                         "iot data source"
-                ).flatMap((String value, Collector<PointData> out) -> {
+                )
+                .flatMap((String value, Collector<PointData> out) -> {
                     try {
                         JsonNode root = mapper.readTree(value);
                         String payloadStr = root.path("payload").asText();
                         if (payloadStr == null || payloadStr.isEmpty()) {
                             // 兼容直接是 PointData 的格式
                             PointData data = mapper.readValue(value, PointData.class);
-                            if (data != null && data.getTimestamp() != null) out.collect(data);
+                            if (data != null && data.getTimestamp() != null)
+                                out.collect(data);
                             return;
                         }
 
                         JsonNode payload = mapper.readTree(payloadStr);
                         String meter = payload.path("meter").asText();
                         JsonNode datas = payload.path("datas");
-                        
+
                         // 从 topic 中提取 companyId 和 projectId
                         // topic 格式: /data/asiainfo/xs2/udp/396/161
                         String topic = root.path("topic").asText("");
@@ -122,8 +126,8 @@ public class IotCalcJob {
                     } catch (Exception e) {
                         log.error("Failed to parse Kafka message: {}, error: {}", value, e.getMessage());
                     }
-                }, TypeInformation.of(PointData.class)).filter(Objects::nonNull).
-                assignTimestampsAndWatermarks(
+                }, TypeInformation.of(PointData.class)).filter(Objects::nonNull)
+                .assignTimestampsAndWatermarks(
                         WatermarkStrategy
                                 .<PointData>forBoundedOutOfOrderness(Duration.ofSeconds(30))
                                 .withTimestampAssigner((event, ts) -> {
@@ -165,7 +169,7 @@ public class IotCalcJob {
         );
 
         // 广播规则状态
-        org.apache.flink.streaming.api.datastream.BroadcastStream<String> broadcastRules = ruleStream.broadcast(CalcProcessFunction.RULES_STATE_DESC);
+        BroadcastStream<String> broadcastRules = ruleStream.broadcast(CalcProcessFunction.RULES_STATE_DESC);
 
         // ========================
         // 4️⃣ 窗口处理：按设备聚合，收集 15 分钟内所有点位的最新值，每分钟触发一次
@@ -203,49 +207,50 @@ public class IotCalcJob {
         // ========================
         // 5️⃣ Kafka Sink
         // ========================
-        DataStream<String> resultJsonStream = resultStream.map(new RichMapFunction<List<PointData>, String>() {
-            private transient ObjectMapper jsonMapper;
+        DataStream<String> resultJsonStream = resultStream.
+                map(new RichMapFunction<List<PointData>, String>() {
+                    private transient ObjectMapper jsonMapper;
 
-            @Override
-            public void open(Configuration parameters) {
-                jsonMapper = new ObjectMapper();
-            }
+                    @Override
+                    public void open(Configuration parameters) {
+                        jsonMapper = new ObjectMapper();
+                    }
 
-            @Override
-            public String map(List<PointData> points) throws Exception {
-                if (points == null || points.isEmpty()) return null;
-                
-                PointData first = points.get(0);
-                
-                // 1. 构建内部 payload 结构
-                Map<String, Object> innerPayload = new HashMap<>();
-                List<Map<String, Object>> datas = new ArrayList<>();
-                
-                for (PointData p : points) {
-                    Map<String, Object> dataPoint = new HashMap<>();
-                    dataPoint.put("nm", p.getProperty_name());
-                    dataPoint.put("v", p.getProperty_num_value());
-                    dataPoint.put("ts", p.getTimestamp() != null ? p.getTimestamp() / 1000 : 0);
-                    datas.add(dataPoint);
-                }
-                
-                innerPayload.put("datas", datas);
-                innerPayload.put("meter", first.getDevice_id());
-                innerPayload.put("mid", "CALC-" + System.currentTimeMillis());
-                
-                // 2. 构建外部包装结构
-                Map<String, Object> wrap = new HashMap<>();
-                wrap.put("parseType", "calc");
-                wrap.put("payload", jsonMapper.writeValueAsString(innerPayload));
-                
-                String companyId = first.getCompany_id() != null ? first.getCompany_id() : "unknown";
-                String projectId = first.getProject_id() != null ? first.getProject_id() : "unknown";
-                String topic = String.format("/data/asiainfo/calc/tcp/%s/%s", companyId, projectId);
-                wrap.put("topic", topic);
-                
-                return jsonMapper.writeValueAsString(wrap);
-            }
-        });
+                    @Override
+                    public String map(List<PointData> points) throws Exception {
+                        if (points == null || points.isEmpty()) return null;
+
+                        PointData first = points.get(0);
+
+                        // 1. 构建内部 payload 结构
+                        Map<String, Object> innerPayload = new HashMap<>();
+                        List<Map<String, Object>> datas = new ArrayList<>();
+
+                        for (PointData p : points) {
+                            Map<String, Object> dataPoint = new HashMap<>();
+                            dataPoint.put("nm", p.getProperty_name());
+                            dataPoint.put("v", p.getProperty_num_value());
+                            dataPoint.put("ts", p.getTimestamp() != null ? p.getTimestamp() / 1000 : 0);
+                            datas.add(dataPoint);
+                        }
+
+                        innerPayload.put("datas", datas);
+                        innerPayload.put("meter", first.getDevice_id());
+                        innerPayload.put("mid", "CALC-" + System.currentTimeMillis());
+
+                        // 2. 构建外部包装结构
+                        Map<String, Object> wrap = new HashMap<>();
+                        wrap.put("parseType", "calc");
+                        wrap.put("payload", jsonMapper.writeValueAsString(innerPayload));
+
+                        String companyId = first.getCompany_id() != null ? first.getCompany_id() : "unknown";
+                        String projectId = first.getProject_id() != null ? first.getProject_id() : "unknown";
+                        String topic = String.format("/data/asiainfo/calc/tcp/%s/%s", companyId, projectId);
+                        wrap.put("topic", topic);
+
+                        return jsonMapper.writeValueAsString(wrap);
+                    }
+                });
 
         // Kafka 生产者配置
         Properties kafkaProps = new Properties();
@@ -287,11 +292,11 @@ public class IotCalcJob {
         public Map<String, PointData> add(PointData value, Map<String, PointData> acc) {
             String ptName = value.getProperty_name();
             if (ptName == null) return acc;
-            
+
             PointData cur = acc.get(ptName);
             long newTs = value.getTimestamp() != null ? value.getTimestamp() : 0L;
             long curTs = (cur != null && cur.getTimestamp() != null) ? cur.getTimestamp() : -1L;
-            
+
             if (cur == null || newTs >= curTs) {
                 acc.put(ptName, value);
             }

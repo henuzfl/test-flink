@@ -24,6 +24,8 @@ import java.util.*;
 @Slf4j
 public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<String, String>, Collection<PointData>, String, List<PointData>> {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     public static final MapStateDescriptor<Tuple3<String, String, String>, Map<String, DevicePointRule>> RULES_STATE_DESC =
             new MapStateDescriptor<>(
                     "rules-broadcast-state",
@@ -37,34 +39,27 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
 
     @Override
     public void open(Configuration parameters) throws Exception {
-        pointValueState = getRuntimeContext().getMapState(
-                new MapStateDescriptor<>("point-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO));
-
+        pointValueState = getRuntimeContext()
+                .getMapState(
+                        new MapStateDescriptor<>("point-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO));
         strategyFactory = new CalcFuncStrategyFactory();
         strategyFactory.init(getRuntimeContext());
     }
 
     @Override
     public void processBroadcastElement(String value, Context ctx, Collector<List<PointData>> out) throws Exception {
-        ObjectMapper objectMapper = new ObjectMapper();
-        JsonNode root = objectMapper.readTree(value);
+        JsonNode root = MAPPER.readTree(value);
         String op = root.path("op").asText();
-
         JsonNode dataNode = "d".equals(op) ? root.path("before") : root.path("after");
         JsonNode beforeNode = root.path("before");
-
         if (dataNode.isMissingNode() || dataNode.isNull()) {
             return;
         }
-
         int pointType = dataNode.path("point_type").asInt();
         if (pointType != 2) {
             return;
         }
-
-        // 解析当前规则
         DevicePointRule newRule = ("d".equals(op)) ? null : DevicePointRule.fromJsonNode(dataNode);
-        // 解析旧规则（用于更新时清理旧依赖索引）
         DevicePointRule oldRule = (beforeNode.isMissingNode() || beforeNode.isNull()) ? null : DevicePointRule.fromJsonNode(beforeNode);
 
         BroadcastState<Tuple3<String, String, String>, Map<String, DevicePointRule>> ruleState = ctx.getBroadcastState(RULES_STATE_DESC);
@@ -131,7 +126,6 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
             PointData firstData = values.iterator().next();
             String projectId = firstData.getProject_id();
             String gatewayCode = firstData.getGateway_code();
-            Tuple2<String, String> currentKey = ctx.getCurrentKey();
 
             List<PointData> results = new ArrayList<>();
 
