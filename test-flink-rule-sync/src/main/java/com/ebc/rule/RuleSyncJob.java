@@ -49,7 +49,8 @@ public class RuleSyncJob {
                                    src.getDatabase() + "." + src.getTableModel(), 
                                    src.getDatabase() + "." + src.getTablePoint())
                         .splitSize(40960) // 设置分片大小
-                        .fetchSize(10000)  // 设置抓取批次大小
+                        .fetchSize(10000)
+                        .serverTimeZone(params.get("mysql.timezone", "Asia/Shanghai"))
                         .deserializer(new JsonDebeziumDeserializationSchema()).build(),
                 WatermarkStrategy.noWatermarks(), "Combined CDC Source"
         ).flatMap((String json, Collector<BusLakConfigEvent> out) -> {
