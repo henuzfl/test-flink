@@ -30,9 +30,15 @@ public class LakPointFormulaUtils {
             return FormulaResult.builder().expr("").dependsOn(Collections.emptyList()).build();
         }
 
-        // 如果不是 JSON 格式，直接返回原始内容
+        // 如果不是 JSON 格式，检查是否包含函数调用格式（用于触发 TransformerStrategy）
         if (!formulaJson.trim().startsWith("{")) {
-            return FormulaResult.builder().expr(formulaJson).dependsOn(Collections.emptyList()).build();
+            // 简单判断是否符合 funcName(...) 格式
+            int exprType = (formulaJson.contains("(") && formulaJson.contains(")")) ? 1 : 0;
+            return FormulaResult.builder()
+                    .expr(formulaJson)
+                    .dependsOn(Collections.emptyList())
+                    .exprType(exprType)
+                    .build();
         }
 
         try {

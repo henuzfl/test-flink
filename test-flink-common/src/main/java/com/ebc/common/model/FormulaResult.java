@@ -22,5 +22,5 @@ public class FormulaResult implements Serializable {
     private List<FormulaDependency> dependsOn; // 结构化的依赖列表
     
     @Builder.Default
-    private int exprType = 0;               // 0: 算术表达式, 1: 函数/逻辑
+    private int exprType = 0;               // 0: 算术表达式, 1: 函数/逻辑, 2: 常量值
 }

@@ -34,7 +34,7 @@ public class DevicePointRule implements Serializable {
     private String pointCode;       // point_code
     private Integer pointType;      // point_type: 1=原始点位，2=派生点位
     private Integer valueType;      // value_type: 0=浮点 1=整型 2=布尔 3=字符串
-    private Integer exprType;       // expr_type: 0=算术表达式 1=自定义公式
+    private Integer exprType;       // expr_type: 0=算术表达式 1=自定义公式 2=常量值
     private String expr;            // expr
     private String dependsOn;       // depends_on JSON 字符串
     private Integer enabled;        // enabled: 1=启用 0=禁用
@@ -57,7 +57,7 @@ public class DevicePointRule implements Serializable {
         String expr = dataNode.path("expr").asText();
         String dependsOn = dataNode.path("depends_on").asText();
         int enabled = dataNode.path("enabled").asInt(1);
-
+ 
         List<Dependency> depList = new ArrayList<>();
         Map<String, String> varMap = new HashMap<>();
         String sourcePoint = null;

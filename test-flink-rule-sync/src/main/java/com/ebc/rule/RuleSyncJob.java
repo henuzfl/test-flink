@@ -61,7 +61,8 @@ public class RuleSyncJob {
                 JsonNode data = "d".equals(op) ? node.get("before") : node.get("after");
                 if (data != null && !data.isNull()) {
                     if (src.getTablePoint().equals(table)) {
-                        if (data.path("data_source").asInt() == 2) {
+                        int dataSource = data.path("data_source").asInt();
+                        if (dataSource == 2 || dataSource == 3) {
                             out.collect(new BusLakConfigEvent(table, op, data.toString()));
                         }
                     } else {

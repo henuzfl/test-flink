@@ -106,17 +106,40 @@ public class LakConfigHandler implements Serializable {
     private void emitPointRule(BusObjectPointData p, BusObjectInfo info, int enabled, BroadcastProcessFunction<?, ?, ?>.Context ctx, Collector<DevicePointRule> out) throws Exception {
         if (p == null) return;
 
-        // 1. 解析公式
-        FormulaResult fr = LakPointFormulaUtils.parse(p.getFormula(), p.getCompanyId());
+        FormulaResult fr;
+        int pointType = 2; // 默认作为派生/计算点位同步
 
-        if (fr.getExprType() == 1) {
-            Matcher matcher = FUNC_PATTERN.matcher(fr.getExpr());
-            if (matcher.matches()) {
-                String funcName = matcher.group(1);
-                String argsStr = matcher.group(2);
-                List<String> args = parseArguments(argsStr);
+        // 1. 如果是常量类型 (data_source=3)
+        if (p.getDataSource() != null && p.getDataSource() == 3) {
+            String exprVal = p.getFormula();
+            if (exprVal != null && exprVal.trim().startsWith("{")) {
+                try {
+                    JsonNode node = MAPPER.readTree(exprVal);
+                    if (node.has("formula")) {
+                        exprVal = node.path("formula").asText();
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to parse numeric formula from JSON: {}", exprVal);
+                }
+            }
+            fr = FormulaResult.builder()
+                    .expr(exprVal)
+                    .exprType(2) // 常量值
+                    .dependsOn(new ArrayList<>())
+                    .build();
+        } else {
+            // 2. 解析公式 (计算点位 data_source=2)
+            fr = LakPointFormulaUtils.parse(p.getFormula(), p.getCompanyId());
 
-                fr = strategyFactory.getStrategy(funcName).transform(ctx, info, p.getDataId(), funcName, args, fr.getDependsOn());
+            if (fr.getExprType() == 1) {
+                Matcher matcher = FUNC_PATTERN.matcher(fr.getExpr());
+                if (matcher.matches()) {
+                    String funcName = matcher.group(1);
+                    String argsStr = matcher.group(2);
+                    List<String> args = parseArguments(argsStr);
+
+                    fr = strategyFactory.getStrategy(funcName).transform(ctx, info, p.getDataId(), funcName, args, fr.getDependsOn());
+                }
             }
         }
 
@@ -132,7 +155,7 @@ public class LakConfigHandler implements Serializable {
                 .companyId(String.valueOf(p.getCompanyId()))
                 .deviceCode(info != null ? info.getObjectCode() : "unknown")
                 .pointCode(p.getDataCode())
-                .pointType(2)
+                .pointType(pointType)
                 .valueType(parseDataType(p.getDataType()))
                 .exprType(fr.getExprType())
                 .expr(fr.getExpr())
