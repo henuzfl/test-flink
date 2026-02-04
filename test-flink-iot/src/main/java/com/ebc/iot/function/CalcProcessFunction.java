@@ -56,13 +56,49 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
             return;
         }
         int pointType = dataNode.path("point_type").asInt();
-        if (pointType != 2) {
-            return;
-        }
+        int dataSource = dataNode.path("data_source").asInt();
+
         DevicePointRule newRule = ("d".equals(op)) ? null : DevicePointRule.fromJsonNode(dataNode);
         DevicePointRule oldRule = (beforeNode.isMissingNode() || beforeNode.isNull()) ? null : DevicePointRule.fromJsonNode(beforeNode);
 
         BroadcastState<Tuple3<String, String, String>, Map<String, DevicePointRule>> ruleState = ctx.getBroadcastState(RULES_STATE_DESC);
+
+        // 0. 处理常量点位定义 (使用特定的 TriggerPoint 为 "" 存储在 rules-broadcast-state 中)
+        if (oldRule != null && oldRule.getExprType() != null && oldRule.getExprType() == 2) {
+            Tuple3<String, String, String> defKey = new Tuple3<>(oldRule.getCompanyId(), oldRule.getDeviceCode(), "");
+            Map<String, DevicePointRule> map = ruleState.get(defKey);
+            if (map != null) {
+                map.remove(oldRule.getPointCode());
+                if (map.isEmpty()) ruleState.remove(defKey);
+                else ruleState.put(defKey, map);
+            }
+        }
+
+        if (newRule != null && newRule.getExprType() != null && newRule.getExprType() == 2) {
+            // 存入广播状态，用于处理“冷启动”设备
+            Tuple3<String, String, String> defKey = new Tuple3<>(newRule.getCompanyId(), newRule.getDeviceCode(), "");
+            Map<String, DevicePointRule> map = ruleState.get(defKey);
+            if (map == null) map = new HashMap<>();
+            map.put(newRule.getPointCode(), newRule);
+            ruleState.put(defKey, map);
+
+            // 直接推送到当前所有活跃设备的 pointValueState
+            Double val = parseConstantValue(newRule.getExpr());
+            if (val != null) {
+                final String ptCode = newRule.getPointCode();
+                final Double finalVal = val;
+                ctx.applyToKeyedState(new MapStateDescriptor<>("point-values", BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.DOUBLE_TYPE_INFO),
+                    (k, s) -> {
+                        if (k.f0.equals(newRule.getCompanyId()) && k.f1.equals(newRule.getDeviceCode())) {
+                            s.put(ptCode, finalVal);
+                        }
+                    });
+            }
+        }
+
+        if (pointType != 2) {
+            return;
+        }
 
         // 1. 清理旧依赖的索引
         if (oldRule != null) {
@@ -107,7 +143,20 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
                 .mapToLong(Long::longValue)
                 .max().orElse(System.currentTimeMillis());
 
-        // 1. 更新本次快照中所有点位的状态
+        // 1. 同步常量到 pointValueState (处理新设备的冷启动)
+        Tuple2<String, String> currentKey = ctx.getCurrentKey();
+        Tuple3<String, String, String> defKey = new Tuple3<>(currentKey.f0, currentKey.f1, "");
+        Map<String, DevicePointRule> constants = ctx.getBroadcastState(RULES_STATE_DESC).get(defKey);
+        if (constants != null) {
+            for (DevicePointRule rule : constants.values()) {
+                if (!pointValueState.contains(rule.getPointCode())) {
+                    Double val = parseConstantValue(rule.getExpr());
+                    if (val != null) pointValueState.put(rule.getPointCode(), val);
+                }
+            }
+        }
+
+        // 2. 更新本次快照中所有点位的状态 (实时值优先级更高)
         for (PointData value : values) {
             pointValueState.put(value.getProperty_name(), value.getProperty_num_value());
         }
@@ -173,6 +222,23 @@ public class CalcProcessFunction extends KeyedBroadcastProcessFunction<Tuple2<St
                 out.collect(results);
             }
         }
+    }
+
+    private Double parseConstantValue(String expr) {
+        if (expr == null || expr.isEmpty()) return null;
+        try {
+            if (expr.startsWith("{")) {
+                JsonNode exprNode = MAPPER.readTree(expr);
+                if (exprNode.has("formula")) {
+                    return exprNode.path("formula").asDouble();
+                }
+            } else {
+                return Double.parseDouble(expr);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse constant from expr: {}, error: {}", expr, e.getMessage());
+        }
+        return null;
     }
 
 
