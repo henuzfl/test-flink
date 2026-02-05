@@ -2,6 +2,7 @@ package com.ebc.rule.handler;
 
 import com.ebc.rule.handler.strategy.CalcAvgTransformer;
 import com.ebc.rule.handler.strategy.CalcConstantTransformer;
+import com.ebc.rule.handler.strategy.CalcDailyStatsTransformer;
 import com.ebc.rule.handler.strategy.CalcSumTransformer;
 import com.ebc.rule.handler.strategy.DecToBinTransformer;
 import com.ebc.rule.handler.strategy.EnergyUseCalcNewTransformer;
@@ -22,6 +23,7 @@ public class TransformerStrategyFactory implements Serializable {
         strategies.put("calcAvg", new CalcAvgTransformer());
         strategies.put("calcConstant", new CalcConstantTransformer());
         strategies.put("decToBin", new DecToBinTransformer());
+        strategies.put("calcDailyStats", new CalcDailyStatsTransformer());
     }
 
     public TransformerStrategy getStrategy(String transformerType) {
