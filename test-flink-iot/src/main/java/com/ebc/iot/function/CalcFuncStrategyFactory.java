@@ -2,6 +2,7 @@ package com.ebc.iot.function;
 
 import com.ebc.iot.function.strategy.ArithmeticCalcFunc;
 import com.ebc.iot.function.strategy.CalcFuncStrategy;
+import com.ebc.iot.function.strategy.DecToBinCalcFunc;
 import com.ebc.iot.function.strategy.diff.DayDiffCalcFunc;
 import com.ebc.iot.function.strategy.diff.MonthDiffCalcFunc;
 import com.ebc.iot.function.strategy.diff.TotalDiffCalcFunc;
@@ -30,6 +31,7 @@ public class CalcFuncStrategyFactory implements Serializable {
         strategies.put("DAY_DIFF", new DayDiffCalcFunc());
         strategies.put("MONTH_DIFF", new MonthDiffCalcFunc());
         strategies.put("YEAR_DIFF", new YearDiffCalcFunc());
+        strategies.put("DEC_TO_BIN", new DecToBinCalcFunc());
 
         for (CalcFuncStrategy s : strategies.values()) {
             s.open(ctx);

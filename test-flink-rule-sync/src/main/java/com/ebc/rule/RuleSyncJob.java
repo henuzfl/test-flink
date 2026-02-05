@@ -90,11 +90,11 @@ public class RuleSyncJob {
         RuleSyncConfig.MysqlConfig target = config.getTargetMysql();
 
         String upsertSql = String.format(
-                "INSERT INTO %s (company_id, device_code, point_code, point_type, value_type, expr_type, expr, depends_on, enabled) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+                "INSERT INTO %s (company_id, device_code, point_code, point_type, value_type, expr_type, expr, depends_on, params, enabled) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
                 "ON DUPLICATE KEY UPDATE " +
                 "point_type=VALUES(point_type), value_type=VALUES(value_type), expr_type=VALUES(expr_type), " +
-                "expr=VALUES(expr), depends_on=VALUES(depends_on), enabled=VALUES(enabled)", target.getTable());
+                "expr=VALUES(expr), depends_on=VALUES(depends_on), params=VALUES(params), enabled=VALUES(enabled)", target.getTable());
 
         stream.addSink(JdbcSink.sink(
                 upsertSql,
@@ -107,7 +107,8 @@ public class RuleSyncJob {
                     ps.setInt(6, rule.getExprType());
                     ps.setString(7, rule.getExpr());
                     ps.setString(8, rule.getDependsOn());
-                    ps.setInt(9, rule.getEnabled());
+                    ps.setString(9, rule.getParams());
+                    ps.setInt(10, rule.getEnabled());
                 },
                 JdbcExecutionOptions.builder().withBatchSize(1).build(),
                 new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()

@@ -37,11 +37,13 @@ public class DevicePointRule implements Serializable {
     private Integer exprType;       // expr_type: 0=算术表达式 1=自定义公式 2=常量值
     private String expr;            // expr
     private String dependsOn;       // depends_on JSON 字符串
+    private String params;          // params JSON 字符串 (包含参数名和值)
     private Integer enabled;        // enabled: 1=启用 0=禁用
 
     // 业务解析后的扩展字段
     private List<Dependency> dependencyList; // 完整的依赖对象列表
     private Map<String, String> varMapping;  // 变量名 -> 点位编码映射
+    private List<RuleParam> paramList;       // 解析后的参数列表
     private String sourcePointCode;         // 来源点位
 
     /**
@@ -56,9 +58,11 @@ public class DevicePointRule implements Serializable {
         int exprType = dataNode.path("expr_type").asInt();
         String expr = dataNode.path("expr").asText();
         String dependsOn = dataNode.path("depends_on").asText();
+        String params = dataNode.path("params").asText();
         int enabled = dataNode.path("enabled").asInt(1);
  
         List<Dependency> depList = new ArrayList<>();
+        List<RuleParam> parList = new ArrayList<>();
         Map<String, String> varMap = new HashMap<>();
         String sourcePoint = null;
 
@@ -82,6 +86,15 @@ public class DevicePointRule implements Serializable {
             }
         }
 
+        if (params != null && !params.trim().isEmpty() && params.trim().startsWith("[")) {
+            try {
+                parList = MAPPER.readValue(params, new TypeReference<List<RuleParam>>() {
+                });
+            } catch (Exception e) {
+                log.warn("Bad params JSON for {}: {}", ptCode, e.getMessage());
+            }
+        }
+
         return DevicePointRule.builder()
                 .companyId(companyId)
                 .deviceCode(deviceCode)
@@ -91,8 +104,10 @@ public class DevicePointRule implements Serializable {
                 .exprType(exprType)
                 .expr(expr)
                 .dependsOn(dependsOn)
+                .params(params)
                 .enabled(enabled)
                 .dependencyList(depList)
+                .paramList(parList)
                 .varMapping(varMap)
                 .sourcePointCode(sourcePoint)
                 .build();
@@ -109,5 +124,16 @@ public class DevicePointRule implements Serializable {
         private Integer company_id;
         private String device_code;
         private String point_code;
+    }
+
+    /**
+     * 函数参数项
+     */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class RuleParam implements Serializable {
+        private String name;
+        private String value;
     }
 }

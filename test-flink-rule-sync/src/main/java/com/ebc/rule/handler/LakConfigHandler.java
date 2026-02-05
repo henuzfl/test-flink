@@ -143,14 +143,18 @@ public class LakConfigHandler implements Serializable {
             }
         }
 
-        // 3. 将结构化依赖转为 JSON 字符串入库
+        // 3. 将结构化依赖和参数转为 JSON 字符串入库
         String dependsOnStr = "[]";
+        String paramsStr = "[]";
         try {
             dependsOnStr = MAPPER.writeValueAsString(fr.getDependsOn());
+            if (fr.getParams() != null && !fr.getParams().isEmpty()) {
+                paramsStr = MAPPER.writeValueAsString(fr.getParams());
+            }
         } catch (Exception e) {
-            log.error("Failed to serialize dependsOn", e);
+            log.error("Failed to serialize dependsOn/params", e);
         }
-
+ 
         DevicePointRule rule = DevicePointRule.builder()
                 .companyId(String.valueOf(p.getCompanyId()))
                 .deviceCode(info != null ? info.getObjectCode() : "unknown")
@@ -160,6 +164,7 @@ public class LakConfigHandler implements Serializable {
                 .exprType(fr.getExprType())
                 .expr(fr.getExpr())
                 .dependsOn(dependsOnStr)
+                .params(paramsStr)
                 .enabled(enabled)
                 .build();
 
@@ -211,11 +216,12 @@ public class LakConfigHandler implements Serializable {
         if (argsStr == null || argsStr.trim().isEmpty()) {
             return args;
         }
-        // 简单按逗号分割（暂不考虑嵌套括号或引号内逗号的极端情况）
+        // 简单按逗号分割
         String[] split = argsStr.split(",");
         for (String s : split) {
-            // 移除首尾空格及引号
-            args.add(s.trim().replaceAll("^['\"]|['\"]$", ""));
+            // 移除首尾空格及各类引号（含中英文单双引号）
+            String trimmed = s.trim().replaceAll("^['\"‘’“”]|['\"‘’“”]$", "");
+            args.add(trimmed);
         }
         return args;
     }

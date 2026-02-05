@@ -23,4 +23,15 @@ public class FormulaResult implements Serializable {
     
     @Builder.Default
     private int exprType = 0;               // 0: 算术表达式, 1: 函数/逻辑, 2: 常量值
+
+    private List<FormulaParam> params;      // 函数参数列表
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class FormulaParam implements Serializable {
+        private String name;
+        private String value;
+    }
 }
