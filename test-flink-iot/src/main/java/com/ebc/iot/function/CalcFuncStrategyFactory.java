@@ -5,6 +5,7 @@ import com.ebc.iot.function.strategy.CalcDailyStatsFunc;
 import com.ebc.iot.function.strategy.CalcFuncStrategy;
 import com.ebc.iot.function.strategy.DecToBinCalcFunc;
 import com.ebc.iot.function.strategy.diff.DayDiffCalcFunc;
+import com.ebc.iot.function.strategy.diff.HourDiffCalcFunc;
 import com.ebc.iot.function.strategy.diff.MonthDiffCalcFunc;
 import com.ebc.iot.function.strategy.diff.TotalDiffCalcFunc;
 import com.ebc.iot.function.strategy.diff.YearDiffCalcFunc;
@@ -29,6 +30,7 @@ public class CalcFuncStrategyFactory implements Serializable {
     public void init(RuntimeContext ctx) {
         strategies.put("ARITHMETIC", new ArithmeticCalcFunc());
         strategies.put("TOTAL_DIFF", new TotalDiffCalcFunc());
+        strategies.put("HOUR_DIFF", new HourDiffCalcFunc());
         strategies.put("DAY_DIFF", new DayDiffCalcFunc());
         strategies.put("MONTH_DIFF", new MonthDiffCalcFunc());
         strategies.put("YEAR_DIFF", new YearDiffCalcFunc());

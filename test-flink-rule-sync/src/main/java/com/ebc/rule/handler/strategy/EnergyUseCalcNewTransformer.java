@@ -16,6 +16,9 @@ public class EnergyUseCalcNewTransformer implements TransformerStrategy {
         FormulaResult result = new FormulaResult();
         String type = args.get(1).toLowerCase();
         switch (type) {
+            case "hour":
+                result.setExpr("HOUR_DIFF");
+                break;
             case "day":
                 result.setExpr("DAY_DIFF");
                 break;
