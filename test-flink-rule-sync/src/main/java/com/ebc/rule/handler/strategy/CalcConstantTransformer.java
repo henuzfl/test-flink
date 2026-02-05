@@ -24,6 +24,9 @@ public class CalcConstantTransformer implements TransformerStrategy {
     // 匹配标识符（点位编码），排除数字开头的常量
     private static final Pattern IDENTIFIER_PATTERN = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*");
 
+    // JEXL 关键字排除列表，避免将 true, false, null 等当作点位
+    private static final java.util.Set<String> KEYWORDS = java.util.Set.of("true", "false", "null", "and", "or", "not");
+
     @Override
     public FormulaResult transform(BroadcastProcessFunction<?, ?, ?>.Context ctx, BusObjectInfo deviceInfo, Integer pointDataId, String funcName, List<String> args, List<FormulaDependency> dependencies) throws Exception {
         if (args == null || args.isEmpty()) {
@@ -46,21 +49,25 @@ public class CalcConstantTransformer implements TransformerStrategy {
             
             String pointCode = matcher.group();
             
-            // 检查是否已分配变量名
-            String varName = varMap.get(pointCode);
-            if (varName == null) {
-                varName = getVarName(count++);
-                varMap.put(pointCode, varName);
-                
-                // 建立同设备点的依赖
-                newDependencies.add(FormulaDependency.builder()
-                        .companyId(deviceInfo.getCompanyId())
-                        .deviceCode(deviceInfo.getObjectCode())
-                        .pointCode(pointCode)
-                        .var(varName)
-                        .build());
+            // 如果是关键字或已分配变量
+            if (KEYWORDS.contains(pointCode.toLowerCase())) {
+                sb.append(pointCode);
+            } else {
+                String varName = varMap.get(pointCode);
+                if (varName == null) {
+                    varName = getVarName(count++);
+                    varMap.put(pointCode, varName);
+                    
+                    // 建立同设备点的依赖
+                    newDependencies.add(FormulaDependency.builder()
+                            .companyId(deviceInfo.getCompanyId())
+                            .deviceCode(deviceInfo.getObjectCode())
+                            .pointCode(pointCode)
+                            .var(varName)
+                            .build());
+                }
+                sb.append(varName);
             }
-            sb.append(varName);
             lastEnd = matcher.end();
         }
         sb.append(rawFormula.substring(lastEnd));
